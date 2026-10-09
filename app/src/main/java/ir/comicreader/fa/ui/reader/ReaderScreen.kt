@@ -289,6 +289,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
                 val horizontal = rememberScrollState()
                 var pendingScrollX by remember { mutableStateOf<Int?>(null) }
+                var pendingVFactor by remember { mutableStateOf<Float?>(null) }
+                var pendingVY by remember { mutableStateOf(0f) }
 
                 // Applied after the new (zoomed) layout exists, so the point under the fingers
                 // stays put instead of jumping. (ScrollState works in integer pixels.)
@@ -296,6 +298,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     pendingScrollX?.let { target ->
                         pendingScrollX = null
                         horizontal.scrollTo(target.coerceIn(0, horizontal.maxValue))
+                    }
+                    pendingVFactor?.let { factor ->
+                        pendingVFactor = null
+                        val anchorDistance = pendingVY + listState.firstVisibleItemScrollOffset
+                        listState.dispatchRawDelta((factor - 1f) * anchorDistance)
                     }
                 }
 
@@ -315,9 +322,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                                         val factor = newZoom / webtoonZoom
                                         if (factor != 1f) {
                                             val centroid = event.calculateCentroid()
-                                            // Keep the horizontal point under the fingers fixed.
+                                            // Keep the point under the fingers fixed (horizontally and vertically).
                                             pendingScrollX =
                                                 (((horizontal.value + centroid.x) * factor) - centroid.x).roundToInt()
+                                            pendingVFactor = factor
+                                            pendingVY = centroid.y
                                             webtoonZoom = newZoom
                                         }
                                         event.changes.forEach { if (it.positionChanged()) it.consume() }

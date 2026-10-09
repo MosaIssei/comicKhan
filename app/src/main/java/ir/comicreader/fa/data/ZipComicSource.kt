@@ -4,8 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import ir.comicreader.fa.data.model.ComicItem
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.zip.ZipFile
@@ -30,7 +28,6 @@ class ZipComicSource private constructor(
     internal constructor(context: Context, item: ComicItem, file: File) :
         this(context, item, file, false, false)
 
-    private val lock = Mutex()
     private val zip: ZipFile = ZipFile(localFile)
 
     private val entries: List<String> = zip.entries().asSequence()
@@ -74,23 +71,22 @@ class ZipComicSource private constructor(
 
     override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? {
         nested?.let { return it.pageBitmap(index, maxDim, minWidthPx) }
-        return withContext(Dispatchers.IO) {
-            lock.withLock {
-                val entry = zip.getEntry(imageEntries[index]) ?: return@withLock null
-                val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                decodeImageBytes(bytes, maxDim, minWidthPx)
-            }
-        }
+        val bytes = readEntry(index) ?: return null
+        return withContext(Dispatchers.IO) { decodeImageBytes(bytes, maxDim, minWidthPx) }
     }
 
     override suspend fun pageBytes(index: Int): ByteArray? {
         nested?.let { return it.pageBytes(index) }
-        return withContext(Dispatchers.IO) {
-            lock.withLock {
-                val entry = zip.getEntry(imageEntries[index]) ?: return@withLock null
-                zip.getInputStream(entry).use { it.readBytes() }
-            }
-        }
+        return readEntry(index)
+    }
+
+    /** ZipFile is safe for concurrent reads and each stream is independent. */
+    private suspend fun readEntry(index: Int): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val name = imageEntries.getOrNull(index) ?: return@runCatching null
+            val entry = zip.getEntry(name) ?: return@runCatching null
+            zip.getInputStream(entry).use { it.readBytes() }
+        }.getOrNull()
     }
 
     override fun close() {

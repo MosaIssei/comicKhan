@@ -78,20 +78,22 @@ class RarComicSource private constructor(
 
     override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? {
         nested?.let { return it.pageBitmap(index, maxDim, minWidthPx) }
-        return withContext(Dispatchers.IO) {
-            lock.withLock {
-                val bytes = archive.getInputStream(imageHeaders[index]).use { it.readBytes() }
-                decodeImageBytes(bytes, maxDim, minWidthPx)
-            }
-        }
+        val bytes = readEntry(index) ?: return null
+        return withContext(Dispatchers.IO) { decodeImageBytes(bytes, maxDim, minWidthPx) }
     }
 
     override suspend fun pageBytes(index: Int): ByteArray? {
         nested?.let { return it.pageBytes(index) }
-        return withContext(Dispatchers.IO) {
-            lock.withLock {
-                archive.getInputStream(imageHeaders[index]).use { it.readBytes() }
-            }
+        return readEntry(index)
+    }
+
+    /** junrar's Archive is not thread-safe, so entry reads are serialised (decode is not). */
+    private suspend fun readEntry(index: Int): ByteArray? = withContext(Dispatchers.IO) {
+        lock.withLock {
+            runCatching {
+                val header = imageHeaders.getOrNull(index) ?: return@runCatching null
+                archive.getInputStream(header).use { it.readBytes() }
+            }.getOrNull()
         }
     }
 

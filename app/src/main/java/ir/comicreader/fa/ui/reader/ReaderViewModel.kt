@@ -27,9 +27,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
-    private val cache = LruCache<String, ImageBitmap>(8)
+    private val cache = LruCache<String, ImageBitmap>(12)
     private val regionCache = LruCache<String, ImageBitmap>(6)
-    private val bytesCache = LruCache<Int, ByteArray>(2)
+    private val bytesCache = LruCache<Int, ByteArray>(4)
     private val loading = java.util.Collections.synchronizedSet(HashSet<String>())
     private var session = 0
 
