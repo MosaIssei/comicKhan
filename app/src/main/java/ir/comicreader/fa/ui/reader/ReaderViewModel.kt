@@ -19,7 +19,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
-    private val cache = LruCache<Int, ImageBitmap>(6)
+    private val cache = LruCache<Int, ImageBitmap>(3)
 
     var title by mutableStateOf("")
         private set
@@ -55,10 +55,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
     }
 
-    suspend fun loadPage(index: Int): ImageBitmap? = withContext(Dispatchers.IO) {
-        cache.get(index)?.let { return@withContext it }
+    /**
+     * Decodes a page. [highQuality] requests a larger bitmap for zoomed-in viewing;
+     * the two variants are cached separately.
+     */
+    suspend fun loadPage(index: Int, highQuality: Boolean = false): ImageBitmap? = withContext(Dispatchers.IO) {
+        val key = index * 2 + if (highQuality) 1 else 0
+        cache.get(key)?.let { return@withContext it }
         val src = source ?: return@withContext null
-        val bitmap = runCatching { src.pageBitmap(index, MAX_DIM) }.getOrNull()
+        val maxDim = if (highQuality) HIGH_DIM else MAX_DIM
+        val bitmap = runCatching { src.pageBitmap(index, maxDim) }.getOrNull()
             ?: return@withContext null
         val ready = if (autoCrop) {
             runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
@@ -66,7 +72,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             bitmap
         }
         val image = ready.asImageBitmap()
-        cache.put(index, image)
+        cache.put(key, image)
         image
     }
 
@@ -81,6 +87,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val MAX_DIM = 2048
+        const val MAX_DIM = 2560
+        const val HIGH_DIM = 3840
     }
 }

@@ -35,6 +35,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_TWO, false)
         set(value) = sp.edit().putBoolean(KEY_TWO, value).apply()
 
+    /** Continuous (webtoon) vertical scrolling instead of paged reading. */
+    var continuous: Boolean
+        get() = sp.getBoolean(KEY_CONTINUOUS, false)
+        set(value) = sp.edit().putBoolean(KEY_CONTINUOUS, value).apply()
+
     var autoCrop: Boolean
         get() = sp.getBoolean(KEY_AUTOCROP, false)
         set(value) = sp.edit().putBoolean(KEY_AUTOCROP, value).apply()
@@ -100,6 +105,7 @@ class Prefs(context: Context) {
         const val KEY_BRIGHT = "brightness"
         const val KEY_CONTRAST = "contrast"
         const val KEY_TWO = "two_page"
+        const val KEY_CONTINUOUS = "continuous"
         const val KEY_AUTOCROP = "auto_crop"
         const val KEY_ORIENT = "orientation"
         const val KEY_SORT = "sort"

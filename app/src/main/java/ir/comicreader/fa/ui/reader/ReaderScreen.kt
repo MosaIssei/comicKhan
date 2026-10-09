@@ -12,21 +12,28 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -78,6 +85,8 @@ import ir.comicreader.fa.data.Prefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 enum class FitMode { FIT, WIDTH, HEIGHT }
@@ -115,6 +124,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     var brightness by remember { mutableStateOf(prefs.brightness.coerceIn(0.2f, 1f)) }
     var contrast by remember { mutableStateOf(prefs.contrast.coerceIn(0.5f, 2f)) }
     var autoCrop by remember { mutableStateOf(prefs.autoCrop) }
+    var continuous by remember { mutableStateOf(prefs.continuous) }
     var orientation by remember {
         mutableStateOf(
             OrientationMode.entries[prefs.orientationOrdinal.coerceIn(0, OrientationMode.entries.size - 1)]
@@ -127,13 +137,28 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     var bookmarks by remember(vm.uri) { mutableStateOf(prefs.bookmarks(vm.uri)) }
 
     val pageCount = vm.pageCount
-    val step = if (twoPage) 2 else 1
+    val step = if (twoPage && !continuous) 2 else 1
     val slots = if (pageCount == 0) 0 else (pageCount + step - 1) / step
+
     val pagerState = rememberPagerState(pageCount = { slots })
+    val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
     val colorFilter = remember(contrast) {
         if (abs(contrast - 1f) < 0.02f) null else contrastFilter(contrast)
+    }
+
+    val displayIndex = if (continuous) listState.firstVisibleItemIndex else pagerState.currentPage * step
+
+    fun seekToPage(page: Int) {
+        val bounded = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        scope.launch {
+            if (continuous) {
+                listState.scrollToItem(bounded)
+            } else {
+                pagerState.scrollToPage((bounded / step).coerceIn(0, (slots - 1).coerceAtLeast(0)))
+            }
+        }
     }
 
     DisposableEffect(Unit) {
@@ -158,17 +183,13 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
     val savedPage = remember { prefs.lastPage(vm.uri) }
     LaunchedEffect(pageCount) {
-        if (pageCount > 0 && savedPage > 0) {
-            val target = (savedPage / step).coerceIn(0, (slots - 1).coerceAtLeast(0))
-            pagerState.scrollToPage(target)
-        }
+        if (pageCount > 0 && savedPage > 0) seekToPage(savedPage)
     }
-    LaunchedEffect(pagerState.currentPage, pageCount) {
-        if (pageCount > 0) prefs.setLastPage(vm.uri, pagerState.currentPage * step)
+    LaunchedEffect(displayIndex, pageCount) {
+        if (pageCount > 0) prefs.setLastPage(vm.uri, displayIndex)
     }
 
-    val currentIndex = pagerState.currentPage * step
-    val isBookmarked = currentIndex in bookmarks
+    val isBookmarked = displayIndex in bookmarks
 
     Box(
         modifier = Modifier
@@ -183,10 +204,23 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 CircularProgressIndicator(color = Color.White)
             }
 
+            continuous -> LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(count = pageCount, key = { it }) { index ->
+                    ContinuousPage(
+                        vm = vm,
+                        index = index,
+                        colorFilter = colorFilter,
+                        onTap = { chromeVisible = !chromeVisible },
+                    )
+                }
+            }
+
             else -> HorizontalPager(
                 state = pagerState,
                 reverseLayout = rtl,
-                userScrollEnabled = !zoomed,
                 modifier = Modifier.fillMaxSize(),
             ) { slot ->
                 PageSlot(
@@ -220,7 +254,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
         ) {
             ReaderTopBar(
                 title = vm.title,
-                current = currentIndex + 1,
+                current = displayIndex + 1,
                 total = pageCount,
                 rtl = rtl,
                 bookmarked = isBookmarked,
@@ -230,7 +264,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     prefs.mangaRightToLeft = rtl
                 },
                 onToggleBookmark = {
-                    bookmarks = prefs.toggleBookmark(vm.uri, currentIndex)
+                    bookmarks = prefs.toggleBookmark(vm.uri, displayIndex)
                 },
                 onToggleSettings = { settingsVisible = !settingsVisible },
             )
@@ -248,6 +282,12 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onRtl = { rtl = it; prefs.mangaRightToLeft = it },
                     fit = fit,
                     onFit = { fit = it; prefs.fitModeOrdinal = it.ordinal },
+                    continuous = continuous,
+                    onContinuous = { value ->
+                        continuous = value
+                        prefs.continuous = value
+                        seekToPage(prefs.lastPage(vm.uri))
+                    },
                     brightness = brightness,
                     onBrightness = { brightness = it; prefs.brightness = it },
                     contrast = contrast,
@@ -260,23 +300,16 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onTwoPage = {
                         twoPage = it
                         prefs.twoPage = it
-                        scope.launch { pagerState.scrollToPage(0) }
+                        seekToPage(prefs.lastPage(vm.uri))
                     },
                     bookmarks = bookmarks,
-                    onJump = { page ->
-                        val target = (page / step).coerceIn(0, (slots - 1).coerceAtLeast(0))
-                        scope.launch { pagerState.animateScrollToPage(target) }
-                    },
+                    onJump = { page -> seekToPage(page) },
                 )
-            } else if (slots > 1) {
+            } else if (pageCount > 1) {
                 ReaderBottomBar(
-                    current = currentIndex + 1,
+                    current = displayIndex + 1,
                     total = pageCount,
-                    onSeek = { page ->
-                        scope.launch {
-                            pagerState.scrollToPage((page / step).coerceIn(0, slots - 1))
-                        }
-                    },
+                    onSeek = { page -> seekToPage(page - 1) },
                 )
             }
         }
@@ -312,24 +345,74 @@ private fun PageSlot(
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var aspect by remember { mutableStateOf<Float?>(null) }
+    val single = step == 1
+    val highQuality = scale > 1.25f
 
     LaunchedEffect(scale) { onZoomChanged(scale > 1.01f) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 6f)
-                    offset = if (scale > 1f) {
-                        val maxX = (size.width * (scale - 1f)) / 2f
-                        val maxY = (size.height * (scale - 1f)) / 2f
-                        Offset(
-                            x = (offset.x + pan.x).coerceIn(-maxX, maxX),
-                            y = (offset.y + pan.y).coerceIn(-maxY, maxY),
-                        )
-                    } else {
-                        Offset.Zero
+            .pointerInput(fit) {
+                fun bounds(s: Float): Pair<Float, Float> {
+                    val w = size.width.toFloat()
+                    val h = size.height.toFloat()
+                    val a = aspect
+                    var contentW = w
+                    var contentH = h
+                    if (single && a != null && a > 0f) {
+                        when (fit) {
+                            FitMode.FIT -> {
+                                val v = min(w, h * a)
+                                contentW = v
+                                contentH = v / a
+                            }
+                            FitMode.WIDTH -> {
+                                contentW = w
+                                contentH = w / a
+                            }
+                            FitMode.HEIGHT -> {
+                                contentH = h
+                                contentW = h * a
+                            }
+                        }
+                    }
+                    return max(0f, (contentW * s - w) / 2f) to max(0f, (contentH * s - h) / 2f)
+                }
+
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var zooming = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.changes.none { it.pressed }) break
+                        if (event.changes.size >= 2) {
+                            zooming = true
+                            val newScale = (scale * event.calculateZoom()).coerceIn(1f, 8f)
+                            val pan = event.calculatePan()
+                            val (maxX, maxY) = bounds(newScale)
+                            scale = newScale
+                            offset = Offset(
+                                (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                (offset.y + pan.y).coerceIn(-maxY, maxY),
+                            )
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        } else if (!zooming) {
+                            val change = event.changes.firstOrNull { it.pressed } ?: continue
+                            val pan = change.positionChange()
+                            if (pan != Offset.Zero) {
+                                val (maxX, maxY) = bounds(scale)
+                                val next = Offset(
+                                    (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                    (offset.y + pan.y).coerceIn(-maxY, maxY),
+                                )
+                                if (next != offset) {
+                                    offset = next
+                                    change.consume()
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -370,8 +453,10 @@ private fun PageSlot(
                 PageImage(
                     vm = vm,
                     index = index,
+                    highQuality = highQuality && single,
                     fit = fit,
                     colorFilter = colorFilter,
+                    onAspect = { if (single) aspect = it },
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight(),
@@ -385,15 +470,20 @@ private fun PageSlot(
 private fun PageImage(
     vm: ReaderViewModel,
     index: Int,
+    highQuality: Boolean,
     fit: FitMode,
     colorFilter: ColorFilter?,
+    onAspect: (Float) -> Unit,
     modifier: Modifier,
 ) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, index) {
-        value = vm.loadPage(index)
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, index, highQuality) {
+        value = vm.loadPage(index, highQuality)
+    }
+    val image = bitmap
+    LaunchedEffect(image) {
+        if (image != null && image.height > 0) onAspect(image.width.toFloat() / image.height)
     }
     Box(modifier, contentAlignment = Alignment.Center) {
-        val image = bitmap
         if (image == null) {
             CircularProgressIndicator(color = Color.White)
         } else {
@@ -403,6 +493,43 @@ private fun PageImage(
                 contentScale = fit.toContentScale(),
                 colorFilter = colorFilter,
                 modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ContinuousPage(
+    vm: ReaderViewModel,
+    index: Int,
+    colorFilter: ColorFilter?,
+    onTap: () -> Unit,
+) {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, index) {
+        value = vm.loadPage(index, false)
+    }
+    val image = bitmap
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (image == null) {
+            Box(Modifier.fillMaxWidth().height(360.dp), Alignment.Center) {
+                CircularProgressIndicator(color = Color.White)
+            }
+        } else {
+            val ratio = image.width.toFloat() / image.height
+            Image(
+                bitmap = image,
+                contentDescription = stringResource(R.string.cd_page),
+                contentScale = ContentScale.FillWidth,
+                colorFilter = colorFilter,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(ratio)
+                    .pointerInput(Unit) { detectTapGestures { onTap() } },
             )
         }
     }
@@ -508,6 +635,8 @@ private fun ReaderSettings(
     onRtl: (Boolean) -> Unit,
     fit: FitMode,
     onFit: (FitMode) -> Unit,
+    continuous: Boolean,
+    onContinuous: (Boolean) -> Unit,
     brightness: Float,
     onBrightness: (Float) -> Unit,
     contrast: Float,
@@ -548,6 +677,20 @@ private fun ReaderSettings(
                     }
                 }
             }
+
+            Text(
+                text = stringResource(R.string.view_mode),
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            ChoiceRow(
+                labels = listOf(
+                    stringResource(R.string.view_paged),
+                    stringResource(R.string.view_continuous),
+                ),
+                selected = if (continuous) 1 else 0,
+                onSelect = { onContinuous(it == 1) },
+            )
 
             Text(
                 text = stringResource(R.string.direction),
