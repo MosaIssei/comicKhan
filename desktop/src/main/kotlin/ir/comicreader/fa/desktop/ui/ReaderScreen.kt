@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -69,6 +70,7 @@ import ir.comicreader.fa.desktop.data.decodeImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @Composable
@@ -145,15 +147,45 @@ fun ReaderScreen(comic: Comic, onBack: () -> Unit) {
                         CircularProgressIndicator(color = Color.White)
                     }
                 } else {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                        items(count = pageCount, key = { it }) { i ->
-                            WebtoonPage(
-                                source = source,
-                                index = i,
-                                aspect = a.getOrElse(i) { DEFAULT_ASPECT },
-                                colorFilter = colorFilter,
-                                onTap = { chrome = !chrome },
-                            )
+                    var boxW by remember { mutableStateOf(0f) }
+                    var panX by remember { mutableStateOf(0f) }
+                    val density = LocalDensity.current
+                    val columnWidth = boxW * zoom.coerceAtLeast(1f)
+                    val maxPan = ((columnWidth - boxW) / 2f).coerceAtLeast(0f)
+
+                    LaunchedEffect(zoom) { panX = 0f }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clipToBounds()
+                            .onSizeChanged { boxW = it.width.toFloat() }
+                            .pointerInput(zoom) {
+                                detectDragGestures { change, drag ->
+                                    // Only horizontal drags pan; vertical stays with the list scroll.
+                                    if (abs(drag.x) >= abs(drag.y)) {
+                                        change.consume()
+                                        panX = (panX + drag.x).coerceIn(-maxPan, maxPan)
+                                    }
+                                }
+                            },
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .width(with(density) { columnWidth.toDp() })
+                                .fillMaxHeight()
+                                .graphicsLayer(translationX = panX),
+                        ) {
+                            items(count = pageCount, key = { it }) { i ->
+                                WebtoonPage(
+                                    source = source,
+                                    index = i,
+                                    aspect = a.getOrElse(i) { DEFAULT_ASPECT },
+                                    colorFilter = colorFilter,
+                                    onTap = { chrome = !chrome },
+                                )
+                            }
                         }
                     }
                 }

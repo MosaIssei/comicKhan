@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -201,6 +202,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     var invert by remember { mutableStateOf(prefs.invertColors) }
     var autoCrop by remember { mutableStateOf(prefs.autoCrop) }
     var continuous by remember { mutableStateOf(prefs.continuous) }
+    var webtoonZoom by remember { mutableStateOf(prefs.webtoonZoom.coerceIn(1f, 3f)) }
     var orientation by remember {
         mutableStateOf(
             OrientationMode.entries[prefs.orientationOrdinal.coerceIn(0, OrientationMode.entries.size - 1)]
@@ -280,23 +282,41 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 CircularProgressIndicator(color = Color.White)
             }
 
-            continuous -> LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(count = pageCount, key = { it }) { index ->
-                    ContinuousPage(
-                        vm = vm,
-                        index = index,
-                        colorFilter = colorFilter,
-                        onTap = { chromeVisible = !chromeVisible },
-                    )
+            continuous -> {
+                val density = LocalDensity.current
+                val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
+                val horizontal = rememberScrollState()
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .horizontalScroll(horizontal),
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .width(baseWidth * webtoonZoom)
+                            .fillMaxHeight(),
+                    ) {
+                        items(count = pageCount, key = { it }) { index ->
+                            ContinuousPage(
+                                vm = vm,
+                                index = index,
+                                colorFilter = colorFilter,
+                                onTap = { chromeVisible = !chromeVisible },
+                            )
+                        }
+                    }
                 }
             }
 
             else -> HorizontalPager(
                 state = pagerState,
                 reverseLayout = rtl,
+                flingBehavior = PagerDefaults.flingBehavior(
+                    state = pagerState,
+                    // A small drag is enough to turn the page (default is 50%).
+                    snapPositionalThreshold = 0.12f,
+                ),
                 modifier = Modifier.fillMaxSize(),
             ) { slot ->
                 PageSlot(
@@ -307,9 +327,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     fit = fit,
                     colorFilter = colorFilter,
                     onZoomChanged = { zoomed = it },
-                    onTapCenter = { chromeVisible = !chromeVisible },
-                    onTapLeft = { turn(scope, pagerState, if (rtl) +1 else -1, slots) },
-                    onTapRight = { turn(scope, pagerState, if (rtl) -1 else +1, slots) },
+                    onTap = { chromeVisible = !chromeVisible },
                 )
             }
         }
@@ -364,6 +382,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         prefs.continuous = value
                         seekToPage(prefs.lastPage(vm.uri))
                     },
+                    webtoonZoom = webtoonZoom,
+                    onWebtoonZoom = { webtoonZoom = it; prefs.webtoonZoom = it },
                     brightness = brightness,
                     onBrightness = { brightness = it; prefs.brightness = it },
                     contrast = contrast,
@@ -431,11 +451,6 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
-private fun turn(scope: CoroutineScope, state: PagerState, delta: Int, slots: Int) {
-    val target = (state.currentPage + delta).coerceIn(0, (slots - 1).coerceAtLeast(0))
-    scope.launch { state.animateScrollToPage(target) }
-}
-
 @Composable
 private fun PageSlot(
     vm: ReaderViewModel,
@@ -445,9 +460,7 @@ private fun PageSlot(
     fit: FitMode,
     colorFilter: ColorFilter?,
     onZoomChanged: (Boolean) -> Unit,
-    onTapCenter: () -> Unit,
-    onTapLeft: () -> Unit,
-    onTapRight: () -> Unit,
+    onTap: () -> Unit,
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -515,14 +528,7 @@ private fun PageSlot(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { position ->
-                        val w = size.width.toFloat()
-                        when {
-                            position.x < w / 3f -> onTapLeft()
-                            position.x > w * 2f / 3f -> onTapRight()
-                            else -> onTapCenter()
-                        }
-                    },
+                    onTap = { onTap() },
                     onDoubleTap = {
                         if (scale > 1f) {
                             scale = 1f
@@ -862,6 +868,8 @@ private fun ReaderSettings(
     onFit: (FitMode) -> Unit,
     continuous: Boolean,
     onContinuous: (Boolean) -> Unit,
+    webtoonZoom: Float,
+    onWebtoonZoom: (Float) -> Unit,
     brightness: Float,
     onBrightness: (Float) -> Unit,
     contrast: Float,
@@ -923,6 +931,19 @@ private fun ReaderSettings(
                 selected = if (continuous) 1 else 0,
                 onSelect = { onContinuous(it == 1) },
             )
+
+            if (continuous) {
+                Text(
+                    text = stringResource(R.string.webtoon_zoom),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Slider(
+                    value = webtoonZoom,
+                    onValueChange = onWebtoonZoom,
+                    valueRange = 1f..3f,
+                )
+            }
 
             Text(
                 text = stringResource(R.string.direction),

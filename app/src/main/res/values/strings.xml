@@ -41,6 +41,7 @@
     <string name="view_mode">حالت نمایش</string>
     <string name="view_paged">صفحه‌به‌صفحه</string>
     <string name="view_continuous">پیوسته (وب‌تُون)</string>
+    <string name="webtoon_zoom">بزرگ‌نمایی وب‌تُون</string>
     <string name="fit_mode">حالت تناسب صفحه</string>
     <string name="fit_screen">کل صفحه</string>
     <string name="fit_width">عرض صفحه</string>

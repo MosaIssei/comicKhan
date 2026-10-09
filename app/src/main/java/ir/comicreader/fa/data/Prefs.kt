@@ -36,6 +36,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_INVERT, false)
         set(value) = sp.edit().putBoolean(KEY_INVERT, value).apply()
 
+    /** Zoom factor for continuous (webtoon) mode. */
+    var webtoonZoom: Float
+        get() = sp.getFloat(KEY_WEBTOON_ZOOM, 1f)
+        set(value) = sp.edit().putFloat(KEY_WEBTOON_ZOOM, value).apply()
+
     var twoPage: Boolean
         get() = sp.getBoolean(KEY_TWO, false)
         set(value) = sp.edit().putBoolean(KEY_TWO, value).apply()
@@ -126,6 +131,7 @@ class Prefs(context: Context) {
         const val KEY_BRIGHT = "brightness"
         const val KEY_CONTRAST = "contrast"
         const val KEY_INVERT = "invert_colors"
+        const val KEY_WEBTOON_ZOOM = "webtoon_zoom"
         const val KEY_TWO = "two_page"
         const val KEY_CONTINUOUS = "continuous"
         const val KEY_AUTOCROP = "auto_crop"
