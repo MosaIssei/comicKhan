@@ -31,6 +31,11 @@ class Prefs(context: Context) {
         get() = sp.getFloat(KEY_CONTRAST, 1f)
         set(value) = sp.edit().putFloat(KEY_CONTRAST, value).apply()
 
+    /** Invert colors (for negative/inverted scans). */
+    var invertColors: Boolean
+        get() = sp.getBoolean(KEY_INVERT, false)
+        set(value) = sp.edit().putBoolean(KEY_INVERT, value).apply()
+
     var twoPage: Boolean
         get() = sp.getBoolean(KEY_TWO, false)
         set(value) = sp.edit().putBoolean(KEY_TWO, value).apply()
@@ -59,6 +64,17 @@ class Prefs(context: Context) {
     fun setLastPage(comicKey: String, page: Int) {
         sp.edit().putInt(KEY_LAST_PREFIX + comicKey, page).apply()
     }
+
+    fun totalPages(comicKey: String): Int = sp.getInt(KEY_TOTAL_PREFIX + comicKey, 0)
+
+    fun setTotalPages(comicKey: String, count: Int) {
+        sp.edit().putInt(KEY_TOTAL_PREFIX + comicKey, count).apply()
+    }
+
+    /** 0 = grid, 1 = list. */
+    var libraryView: Int
+        get() = sp.getInt(KEY_LIBVIEW, 0)
+        set(value) = sp.edit().putInt(KEY_LIBVIEW, value).apply()
 
     fun lastOpened(comicKey: String): Long = sp.getLong(KEY_OPENED_PREFIX + comicKey, 0L)
 
@@ -95,6 +111,11 @@ class Prefs(context: Context) {
         Recent(key, name, kind)
     }
 
+    fun removeRecent(comicKey: String) {
+        val updated = historyUris().filter { it != comicKey }
+        sp.edit().putString(KEY_HISTORY, updated.joinToString("\n")).apply()
+    }
+
     private fun historyUris(): List<String> =
         sp.getString(KEY_HISTORY, null)?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
 
@@ -104,6 +125,7 @@ class Prefs(context: Context) {
         const val KEY_FIT = "fit"
         const val KEY_BRIGHT = "brightness"
         const val KEY_CONTRAST = "contrast"
+        const val KEY_INVERT = "invert_colors"
         const val KEY_TWO = "two_page"
         const val KEY_CONTINUOUS = "continuous"
         const val KEY_AUTOCROP = "auto_crop"
@@ -115,6 +137,8 @@ class Prefs(context: Context) {
         const val KEY_HISTORY = "history"
         const val KEY_HIST_NAME = "hist_name_"
         const val KEY_HIST_KIND = "hist_kind_"
+        const val KEY_TOTAL_PREFIX = "total_"
+        const val KEY_LIBVIEW = "library_view"
         const val MAX_HISTORY = 20
     }
 }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,16 +48,19 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -88,6 +92,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -163,15 +168,21 @@ private fun visibleSourceRect(
     return rect
 }
 
-private fun contrastFilter(contrast: Float): ColorFilter {
-    val t = (1f - contrast) * 128f
-    val values = floatArrayOf(
-        contrast, 0f, 0f, 0f, t,
-        0f, contrast, 0f, 0f, t,
-        0f, 0f, contrast, 0f, t,
-        0f, 0f, 0f, 1f, 0f,
+/** Combined contrast + (optional) color inversion filter, or null when it has no effect. */
+private fun imageColorFilter(contrast: Float, invert: Boolean): ColorFilter? {
+    if (!invert && abs(contrast - 1f) < 0.02f) return null
+    val scale = if (invert) -contrast else contrast
+    val offset = if (invert) 255f - (1f - contrast) * 128f else (1f - contrast) * 128f
+    return ColorFilter.colorMatrix(
+        ColorMatrix(
+            floatArrayOf(
+                scale, 0f, 0f, 0f, offset,
+                0f, scale, 0f, 0f, offset,
+                0f, 0f, scale, 0f, offset,
+                0f, 0f, 0f, 1f, 0f,
+            )
+        )
     )
-    return ColorFilter.colorMatrix(ColorMatrix(values))
 }
 
 @Composable
@@ -187,6 +198,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     }
     var brightness by remember { mutableStateOf(prefs.brightness.coerceIn(0.2f, 1f)) }
     var contrast by remember { mutableStateOf(prefs.contrast.coerceIn(0.5f, 2f)) }
+    var invert by remember { mutableStateOf(prefs.invertColors) }
     var autoCrop by remember { mutableStateOf(prefs.autoCrop) }
     var continuous by remember { mutableStateOf(prefs.continuous) }
     var orientation by remember {
@@ -197,6 +209,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     var twoPage by remember { mutableStateOf(prefs.twoPage) }
     var chromeVisible by remember { mutableStateOf(true) }
     var settingsVisible by remember { mutableStateOf(false) }
+    var jumpOpen by remember { mutableStateOf(false) }
+    var jumpText by remember { mutableStateOf("") }
     var zoomed by remember { mutableStateOf(false) }
     var bookmarks by remember(vm.uri) { mutableStateOf(prefs.bookmarks(vm.uri)) }
 
@@ -208,9 +222,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    val colorFilter = remember(contrast) {
-        if (abs(contrast - 1f) < 0.02f) null else contrastFilter(contrast)
-    }
+    val colorFilter = remember(contrast, invert) { imageColorFilter(contrast, invert) }
 
     val displayIndex = if (continuous) listState.firstVisibleItemIndex else pagerState.currentPage * step
 
@@ -356,6 +368,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onBrightness = { brightness = it; prefs.brightness = it },
                     contrast = contrast,
                     onContrast = { contrast = it; prefs.contrast = it },
+                    invert = invert,
+                    onInvert = { invert = it; prefs.invertColors = it },
                     autoCrop = autoCrop,
                     onAutoCrop = { autoCrop = it; prefs.autoCrop = it },
                     orientation = orientation,
@@ -368,6 +382,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     },
                     bookmarks = bookmarks,
                     onJump = { page -> seekToPage(page) },
+                    onJumpToPage = { jumpOpen = true },
                 )
             } else if (pageCount > 1) {
                 ReaderBottomBar(
@@ -377,6 +392,33 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 )
             }
         }
+    }
+
+    if (jumpOpen) {
+        AlertDialog(
+            onDismissRequest = { jumpOpen = false },
+            title = { Text(stringResource(R.string.jump_to_page)) },
+            text = {
+                OutlinedTextField(
+                    value = jumpText,
+                    onValueChange = { input -> jumpText = input.filter { it.isDigit() }.take(6) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    jumpText.toIntOrNull()?.let { seekToPage(it - 1) }
+                    jumpOpen = false
+                    jumpText = ""
+                }) { Text(stringResource(R.string.go)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { jumpOpen = false; jumpText = "" }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }
 
@@ -824,6 +866,8 @@ private fun ReaderSettings(
     onBrightness: (Float) -> Unit,
     contrast: Float,
     onContrast: (Float) -> Unit,
+    invert: Boolean,
+    onInvert: (Boolean) -> Unit,
     autoCrop: Boolean,
     onAutoCrop: (Boolean) -> Unit,
     orientation: OrientationMode,
@@ -832,6 +876,7 @@ private fun ReaderSettings(
     onTwoPage: (Boolean) -> Unit,
     bookmarks: Set<Int>,
     onJump: (Int) -> Unit,
+    onJumpToPage: () -> Unit,
 ) {
     Surface(color = Color.Black.copy(alpha = 0.88f)) {
         Column(
@@ -841,6 +886,10 @@ private fun ReaderSettings(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            OutlinedButton(onClick = onJumpToPage, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.jump_to_page))
+            }
+
             if (bookmarks.isNotEmpty()) {
                 Text(
                     text = stringResource(R.string.bookmarks),
@@ -937,6 +986,19 @@ private fun ReaderSettings(
                 onValueChange = onContrast,
                 valueRange = 0.5f..2f,
             )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(R.string.invert_colors),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(checked = invert, onCheckedChange = onInvert)
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),

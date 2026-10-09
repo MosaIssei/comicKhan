@@ -1,0 +1,55 @@
+name: Build Desktop (Windows)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build MSI installer
+        run: gradle :desktop:packageMsi --no-daemon --stacktrace --configure-on-demand
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: comickhan-windows-msi
+          path: desktop/build/compose/binaries/main/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Build portable app image
+        run: gradle :desktop:createDistributable --no-daemon --stacktrace --configure-on-demand
+
+      - name: Upload portable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: comickhan-windows-portable
+          path: desktop/build/compose/binaries/main/app/**
+          if-no-files-found: warn
+
+      - name: Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/build/compose/binaries/main/msi/*.msi

@@ -12,6 +12,13 @@
     <string name="search_hint">جست‌وجوی نام کمیک…</string>
     <string name="no_results">نتیجه‌ای پیدا نشد</string>
     <string name="recent_continue">ادامهٔ مطالعه</string>
+    <string name="view_grid">نمایش شبکه‌ای</string>
+    <string name="view_list">نمایش فهرستی</string>
+    <string name="progress_percent">%1$d٪ خوانده شده</string>
+    <string name="remove_item">حذف از ادامهٔ مطالعه</string>
+    <string name="jump_to_page">پرش به صفحه</string>
+    <string name="go">برو</string>
+    <string name="cancel">انصراف</string>
 
     <string name="empty_library">چیزی پیدا نشد</string>
     <string name="empty_library_hint">در پوشهٔ انتخابی هیچ فایل CBZ/ZIP یا پوشهٔ تصویری نبود.</string>
@@ -39,6 +46,7 @@
     <string name="fit_height">ارتفاع صفحه</string>
     <string name="brightness">روشنایی</string>
     <string name="contrast">کنتراست</string>
+    <string name="invert_colors">معکوس‌کردن رنگ‌ها</string>
     <string name="auto_crop">برش خودکار حاشیه</string>
     <string name="orientation">چرخش صفحه</string>
     <string name="orient_auto">خودکار</string>

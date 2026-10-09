@@ -28,6 +28,7 @@ data class LibraryUiState(
     val error: String? = null,
     val hasFolder: Boolean = false,
     val sortOrdinal: Int = 0,
+    val viewMode: Int = 0,
 )
 
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
@@ -36,7 +37,11 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
 
     private val _state = MutableStateFlow(
-        LibraryUiState(sortOrdinal = prefs.sortOrdinal, recents = prefs.recents())
+        LibraryUiState(
+            sortOrdinal = prefs.sortOrdinal,
+            recents = prefs.recents(),
+            viewMode = prefs.libraryView,
+        )
     )
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
 
@@ -55,6 +60,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshRecents() {
+        _state.update { it.copy(recents = prefs.recents()) }
+    }
+
+    fun setView(mode: Int) {
+        prefs.libraryView = mode
+        _state.update { it.copy(viewMode = mode) }
+    }
+
+    fun removeRecent(uriString: String) {
+        prefs.removeRecent(uriString)
         _state.update { it.copy(recents = prefs.recents()) }
     }
 

@@ -99,6 +99,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 error = if (src.pageCount == 0) "صفحه‌ای یافت نشد" else null
                 prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
                 prefs.recordOpened(item)
+                prefs.setTotalPages(item.uri.toString(), src.pageCount)
             }
             .onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
     }

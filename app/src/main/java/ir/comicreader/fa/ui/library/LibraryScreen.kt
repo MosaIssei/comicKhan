@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MenuBook
@@ -35,6 +38,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,6 +48,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -59,7 +64,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -80,6 +87,23 @@ private fun clearCaches(context: Context) {
     File(context.cacheDir, "comics").deleteRecursively()
     Thumbnails.clear()
 }
+
+private fun kindIcon(kind: ComicKind): ImageVector = when (kind) {
+    ComicKind.ZIP -> Icons.Filled.MenuBook
+    ComicKind.RAR -> Icons.Filled.Archive
+    ComicKind.PDF -> Icons.Filled.PictureAsPdf
+    ComicKind.FOLDER -> Icons.Filled.Image
+}
+
+private fun kindLabel(kind: ComicKind): Int = when (kind) {
+    ComicKind.ZIP -> R.string.kind_zip
+    ComicKind.RAR -> R.string.kind_rar
+    ComicKind.PDF -> R.string.kind_pdf
+    ComicKind.FOLDER -> R.string.kind_folder
+}
+
+private fun progressOf(lastPage: Int, total: Int): Float =
+    if (total > 0) ((lastPage + 1).toFloat() / total).coerceIn(0f, 1f) else 0f
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -117,6 +141,14 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
                 actions = {
                     IconButton(onClick = { searchVisible = !searchVisible }) {
                         Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search))
+                    }
+                    IconButton(onClick = { vm.setView(if (state.viewMode == 0) 1 else 0) }) {
+                        Icon(
+                            imageVector = if (state.viewMode == 0) Icons.Filled.ViewList else Icons.Filled.GridView,
+                            contentDescription = stringResource(
+                                if (state.viewMode == 0) R.string.view_list else R.string.view_grid
+                            ),
+                        )
                     }
                     IconButton(onClick = { openFile.launch(arrayOf("*/*")) }) {
                         Icon(Icons.Filled.InsertDriveFile, contentDescription = stringResource(R.string.open_file))
@@ -183,7 +215,11 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
             }
 
             if (state.recents.isNotEmpty() && state.query.isBlank()) {
-                RecentSection(recents = state.recents, onOpen = onOpen)
+                RecentSection(
+                    recents = state.recents,
+                    onOpen = onOpen,
+                    onRemove = { vm.removeRecent(it) },
+                )
             }
 
             Box(modifier = Modifier.weight(1f)) {
@@ -203,6 +239,17 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
                         onOpenFile = { openFile.launch(arrayOf("*/*")) },
                     )
 
+                    state.viewMode == 1 -> LazyColumn(
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        state.items.forEach { comic ->
+                            item(key = comic.uri.toString()) {
+                                ComicRow(comic = comic, onClick = { onOpen(comic) })
+                            }
+                        }
+                    }
+
                     else -> LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 140.dp),
                         contentPadding = PaddingValues(12.dp),
@@ -220,7 +267,29 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
 }
 
 @Composable
-private fun RecentSection(recents: List<Recent>, onOpen: (ComicItem) -> Unit) {
+private fun ProgressInfo(lastPage: Int, total: Int, modifier: Modifier = Modifier) {
+    if (total <= 0 || lastPage <= 0) return
+    val fraction = progressOf(lastPage, total)
+    Column(modifier = modifier) {
+        LinearProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = stringResource(R.string.progress_percent, (fraction * 100).toInt()),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun RecentSection(
+    recents: List<Recent>,
+    onOpen: (ComicItem) -> Unit,
+    onRemove: (String) -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -238,7 +307,11 @@ private fun RecentSection(recents: List<Recent>, onOpen: (ComicItem) -> Unit) {
             recents.forEach { recent ->
                 item(key = recent.uriString) {
                     val item = ComicItem(recent.name, Uri.parse(recent.uriString), recent.kind)
-                    RecentCard(comic = item, onClick = { onOpen(item) })
+                    RecentCard(
+                        comic = item,
+                        onClick = { onOpen(item) },
+                        onRemove = { onRemove(recent.uriString) },
+                    )
                 }
             }
         }
@@ -246,7 +319,7 @@ private fun RecentSection(recents: List<Recent>, onOpen: (ComicItem) -> Unit) {
 }
 
 @Composable
-private fun RecentCard(comic: ComicItem, onClick: () -> Unit) {
+private fun RecentCard(comic: ComicItem, onClick: () -> Unit, onRemove: () -> Unit) {
     val context = LocalContext.current
     val thumb by produceState<ImageBitmap?>(initialValue = null, comic.uri) {
         value = Thumbnails.load(context, comic)
@@ -272,7 +345,19 @@ private fun RecentCard(comic: ComicItem, onClick: () -> Unit) {
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Icon(Icons.Filled.MenuBook, contentDescription = null, modifier = Modifier.height(36.dp))
+                    Icon(kindIcon(comic.kind), contentDescription = null, modifier = Modifier.height(36.dp))
+                }
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(28.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.remove_item),
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
             Text(
@@ -304,6 +389,7 @@ private fun ComicCard(comic: ComicItem, onClick: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { Prefs(context) }
     val lastPage = remember(comic.uri) { prefs.lastPage(comic.uri.toString()) }
+    val total = remember(comic.uri) { prefs.totalPages(comic.uri.toString()) }
     val thumb by produceState<ImageBitmap?>(initialValue = null, comic.uri) {
         value = Thumbnails.load(context, comic)
     }
@@ -325,16 +411,7 @@ private fun ComicCard(comic: ComicItem, onClick: () -> Unit) {
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
-                    Icon(
-                        imageVector = when (comic.kind) {
-                            ComicKind.ZIP -> Icons.Filled.MenuBook
-                            ComicKind.RAR -> Icons.Filled.Archive
-                            ComicKind.PDF -> Icons.Filled.PictureAsPdf
-                            ComicKind.FOLDER -> Icons.Filled.Image
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.height(48.dp),
-                    )
+                    Icon(kindIcon(comic.kind), contentDescription = null, modifier = Modifier.height(48.dp))
                 }
             }
             Text(
@@ -350,25 +427,75 @@ private fun ComicCard(comic: ComicItem, onClick: () -> Unit) {
                 text = stringResource(kindLabel(comic.kind)),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                modifier = Modifier.padding(start = 10.dp, end = 10.dp),
             )
-            if (lastPage > 0) {
-                Text(
-                    text = stringResource(R.string.continue_from, lastPage + 1),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
-                )
-            }
+            ProgressInfo(
+                lastPage = lastPage,
+                total = total,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            )
         }
     }
 }
 
-private fun kindLabel(kind: ComicKind): Int = when (kind) {
-    ComicKind.ZIP -> R.string.kind_zip
-    ComicKind.RAR -> R.string.kind_rar
-    ComicKind.PDF -> R.string.kind_pdf
-    ComicKind.FOLDER -> R.string.kind_folder
+@Composable
+private fun ComicRow(comic: ComicItem, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { Prefs(context) }
+    val lastPage = remember(comic.uri) { prefs.lastPage(comic.uri.toString()) }
+    val total = remember(comic.uri) { prefs.totalPages(comic.uri.toString()) }
+    val thumb by produceState<ImageBitmap?>(initialValue = null, comic.uri) {
+        value = Thumbnails.load(context, comic)
+    }
+
+    Card(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                val image = thumb
+                if (image != null) {
+                    Image(
+                        bitmap = image,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(kindIcon(comic.kind), contentDescription = null, modifier = Modifier.height(28.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = comic.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(kindLabel(comic.kind)),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                ProgressInfo(lastPage = lastPage, total = total)
+            }
+        }
+    }
 }
 
 @Composable
