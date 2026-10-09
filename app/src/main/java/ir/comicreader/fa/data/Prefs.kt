@@ -1,8 +1,6 @@
 package ir.comicreader.fa.data
 
 import android.content.Context
-import ir.comicreader.fa.data.model.ComicItem
-import ir.comicreader.fa.data.model.ComicKind
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("reader_prefs", Context.MODE_PRIVATE)
@@ -98,32 +96,6 @@ class Prefs(context: Context) {
         return current
     }
 
-    /** Records a comic at the top of the recently-read list. */
-    fun recordOpened(item: ComicItem) {
-        val key = item.uri.toString()
-        val others = historyUris().filter { it != key }
-        val updated = (listOf(key) + others).take(MAX_HISTORY)
-        sp.edit()
-            .putString(KEY_HISTORY, updated.joinToString("\n"))
-            .putString(KEY_HIST_NAME + key, item.name)
-            .putInt(KEY_HIST_KIND + key, item.kind.ordinal)
-            .apply()
-    }
-
-    fun recents(): List<Recent> = historyUris().mapNotNull { key ->
-        val name = sp.getString(KEY_HIST_NAME + key, null) ?: return@mapNotNull null
-        val kind = ComicKind.entries.getOrNull(sp.getInt(KEY_HIST_KIND + key, 0)) ?: return@mapNotNull null
-        Recent(key, name, kind)
-    }
-
-    fun removeRecent(comicKey: String) {
-        val updated = historyUris().filter { it != comicKey }
-        sp.edit().putString(KEY_HISTORY, updated.joinToString("\n")).apply()
-    }
-
-    private fun historyUris(): List<String> =
-        sp.getString(KEY_HISTORY, null)?.split("\n")?.filter { it.isNotBlank() } ?: emptyList()
-
     private companion object {
         const val KEY_TREE = "tree_uri"
         const val KEY_RTL = "rtl"
@@ -140,11 +112,7 @@ class Prefs(context: Context) {
         const val KEY_LAST_PREFIX = "last_"
         const val KEY_OPENED_PREFIX = "opened_"
         const val KEY_BM_PREFIX = "bm_"
-        const val KEY_HISTORY = "history"
-        const val KEY_HIST_NAME = "hist_name_"
-        const val KEY_HIST_KIND = "hist_kind_"
         const val KEY_TOTAL_PREFIX = "total_"
         const val KEY_LIBVIEW = "library_view"
-        const val MAX_HISTORY = 20
     }
 }

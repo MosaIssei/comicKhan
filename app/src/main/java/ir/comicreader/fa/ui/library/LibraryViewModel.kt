@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import ir.comicreader.fa.data.LibraryRepository
 import ir.comicreader.fa.data.Ordering
 import ir.comicreader.fa.data.Prefs
-import ir.comicreader.fa.data.Recent
 import ir.comicreader.fa.data.Saf
 import ir.comicreader.fa.data.model.ComicItem
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +22,6 @@ data class LibraryUiState(
     val treeUri: Uri? = null,
     val allItems: List<ComicItem> = emptyList(),
     val items: List<ComicItem> = emptyList(),
-    val recents: List<Recent> = emptyList(),
     val query: String = "",
     val error: String? = null,
     val hasFolder: Boolean = false,
@@ -39,7 +37,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(
         LibraryUiState(
             sortOrdinal = prefs.sortOrdinal,
-            recents = prefs.recents(),
             viewMode = prefs.libraryView,
         )
     )
@@ -59,18 +56,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _state.value.treeUri?.let { scan(it) }
     }
 
-    fun refreshRecents() {
-        _state.update { it.copy(recents = prefs.recents()) }
-    }
-
     fun setView(mode: Int) {
         prefs.libraryView = mode
         _state.update { it.copy(viewMode = mode) }
-    }
-
-    fun removeRecent(uriString: String) {
-        prefs.removeRecent(uriString)
-        _state.update { it.copy(recents = prefs.recents()) }
     }
 
     fun setQuery(query: String) {

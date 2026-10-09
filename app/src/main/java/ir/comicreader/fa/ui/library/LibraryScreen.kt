@@ -1,7 +1,6 @@
 package ir.comicreader.fa.ui.library
 
 import android.content.Context
-import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -76,7 +74,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ir.comicreader.fa.R
 import ir.comicreader.fa.data.Prefs
-import ir.comicreader.fa.data.Recent
 import ir.comicreader.fa.data.Saf
 import ir.comicreader.fa.data.Thumbnails
 import ir.comicreader.fa.data.kindForName
@@ -218,14 +215,6 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
                 )
             }
 
-            if (state.recents.isNotEmpty() && state.query.isBlank()) {
-                RecentSection(
-                    recents = state.recents,
-                    onOpen = onOpen,
-                    onRemove = { vm.removeRecent(it) },
-                )
-            }
-
             Box(modifier = Modifier.weight(1f)) {
                 when {
                     state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
@@ -285,93 +274,6 @@ private fun ProgressInfo(lastPage: Int, total: Int, modifier: Modifier = Modifie
             color = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.padding(top = 4.dp),
         )
-    }
-}
-
-@Composable
-private fun RecentSection(
-    recents: List<Recent>,
-    onOpen: (ComicItem) -> Unit,
-    onRemove: (String) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.recent_continue),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-        )
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            recents.forEach { recent ->
-                item(key = recent.uriString) {
-                    val item = ComicItem(recent.name, Uri.parse(recent.uriString), recent.kind)
-                    RecentCard(
-                        comic = item,
-                        onClick = { onOpen(item) },
-                        onRemove = { onRemove(recent.uriString) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecentCard(comic: ComicItem, onClick: () -> Unit, onRemove: () -> Unit) {
-    val context = LocalContext.current
-    val thumb by produceState<ImageBitmap?>(initialValue = null, comic.uri) {
-        value = Thumbnails.load(context, comic)
-    }
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.width(120.dp),
-    ) {
-        Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.72f),
-                contentAlignment = Alignment.Center,
-            ) {
-                val image = thumb
-                if (image != null) {
-                    Image(
-                        bitmap = image,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Icon(kindIcon(comic.kind), contentDescription = null, modifier = Modifier.height(36.dp))
-                }
-                IconButton(
-                    onClick = onRemove,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .size(28.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = stringResource(R.string.remove_item),
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-            Text(
-                text = comic.name,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-        }
     }
 }
 

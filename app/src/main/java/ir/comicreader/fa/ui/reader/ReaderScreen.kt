@@ -16,6 +16,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -287,19 +288,42 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 val density = LocalDensity.current
                 val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
                 val horizontal = rememberScrollState()
+                var pendingDx by remember { mutableStateOf(0f) }
+                var pendingDy by remember { mutableStateOf(0f) }
+
+                // Applied after the new (zoomed) layout exists, so the point under the fingers
+                // stays put instead of jumping.
+                LaunchedEffect(webtoonZoom) {
+                    if (pendingDx != 0f) {
+                        horizontal.dispatchRawDelta(pendingDx)
+                        pendingDx = 0f
+                    }
+                    if (pendingDy != 0f) {
+                        listState.dispatchRawDelta(pendingDy)
+                        pendingDy = 0f
+                    }
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .horizontalScroll(horizontal)
                         .pointerInput(Unit) {
-                            // Pinch (two fingers) zooms the webtoon; single-finger drags scroll.
+                            // Pinch (two fingers) zooms around the fingers; single-finger drags scroll.
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     if (event.changes.none { it.pressed }) break
                                     if (event.changes.size >= 2) {
-                                        webtoonZoom = (webtoonZoom * event.calculateZoom()).coerceIn(1f, 4f)
+                                        val newZoom = (webtoonZoom * event.calculateZoom()).coerceIn(1f, 4f)
+                                        val factor = newZoom / webtoonZoom
+                                        if (factor != 1f) {
+                                            val centroid = event.calculateCentroid()
+                                            pendingDx = (horizontal.value + centroid.x) * (factor - 1f)
+                                            pendingDy = centroid.y * (factor - 1f)
+                                            webtoonZoom = newZoom
+                                        }
                                         event.changes.forEach { if (it.positionChanged()) it.consume() }
                                     }
                                 }

@@ -92,13 +92,7 @@ private fun AppRoot(incomingUri: Uri?, incomingToken: Long) {
         val readerVm: ReaderViewModel = viewModel(key = current.uri.toString())
         LaunchedEffect(current) { readerVm.open(current) }
         DisposableEffect(current) { onDispose { readerVm.close() } }
-        ReaderScreen(
-            vm = readerVm,
-            onBack = {
-                opened = null
-                libraryVm.refreshRecents()
-            },
-        )
+        ReaderScreen(vm = readerVm, onBack = { opened = null })
     }
 }
 
