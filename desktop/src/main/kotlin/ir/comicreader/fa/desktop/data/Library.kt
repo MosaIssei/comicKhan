@@ -9,10 +9,7 @@ object Library {
         dir.listFiles()?.forEach { f ->
             when {
                 f.isDirectory && containsImages(f) -> out += Comic(f.name, f, Kind.FOLDER)
-                f.isFile -> when (f.extension.lowercase()) {
-                    "zip", "cbz" -> out += Comic(f.name, f, Kind.ZIP)
-                    "rar", "cbr" -> out += Comic(f.name, f, Kind.RAR)
-                }
+                f.isFile -> kindFor(f)?.let { out += Comic(f.name, f, it) }
             }
         }
         return out.sortedWith(compareBy(Ordering.Natural) { it.name })
@@ -21,6 +18,7 @@ object Library {
     fun kindFor(file: File): Kind? = when (file.extension.lowercase()) {
         "zip", "cbz" -> Kind.ZIP
         "rar", "cbr" -> Kind.RAR
+        "mht", "mhtml" -> Kind.MHTML
         else -> null
     }
 

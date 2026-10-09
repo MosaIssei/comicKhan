@@ -2,7 +2,7 @@ package ir.comicreader.fa.desktop.data
 
 import java.io.File
 
-enum class Kind { ZIP, RAR, FOLDER }
+enum class Kind { ZIP, RAR, MHTML, FOLDER }
 
 data class Comic(
     val name: String,

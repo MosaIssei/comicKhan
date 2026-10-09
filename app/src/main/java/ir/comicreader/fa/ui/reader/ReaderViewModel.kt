@@ -12,11 +12,13 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import ir.comicreader.fa.data.ComicSource
 import ir.comicreader.fa.data.ComicSourceFactory
 import ir.comicreader.fa.data.RegionDecode
 import ir.comicreader.fa.data.model.ComicItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -92,18 +94,26 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun open(item: ComicItem) {
         close()
-        runCatching { ComicSourceFactory.open(getApplication(), item) }
-            .onSuccess { src ->
+        viewModelScope.launch {
+            // Opening (copying archives, parsing MHTML) can be heavy: do it off the main
+            // thread, including the first page-count read which may trigger a lazy parse.
+            val opened = withContext(Dispatchers.IO) {
+                runCatching {
+                    val src = ComicSourceFactory.open(getApplication(), item)
+                    src to src.pageCount
+                }
+            }
+            opened.onSuccess { (src, count) ->
                 source = src
                 title = item.name
                 uri = item.uri.toString()
-                pageCount = src.pageCount
-                error = if (src.pageCount == 0) "صفحه‌ای یافت نشد" else null
+                pageCount = count
+                error = if (count == 0) "صفحه‌ای یافت نشد" else null
                 prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
                 prefs.recordOpened(item)
-                prefs.setTotalPages(item.uri.toString(), src.pageCount)
-            }
-            .onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
+                prefs.setTotalPages(item.uri.toString(), count)
+            }.onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
+        }
     }
 
     /**

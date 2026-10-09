@@ -26,6 +26,7 @@
     <string name="kind_zip">آرشیو ZIP</string>
     <string name="kind_rar">آرشیو RAR</string>
     <string name="kind_pdf">پی‌دی‌اف</string>
+    <string name="kind_mhtml">صفحهٔ وب (MHTML)</string>
     <string name="kind_folder">پوشهٔ تصاویر</string>
 
     <string name="pages_count">%1$d صفحه</string>

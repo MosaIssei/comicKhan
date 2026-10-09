@@ -88,8 +88,21 @@ object ComicSourceFactory {
     fun open(comic: Comic): ComicSource = when (comic.kind) {
         Kind.ZIP -> ZipSource(comic.file)
         Kind.RAR -> RarSource(comic.file)
+        Kind.MHTML -> MhtmlSource(comic.file)
         Kind.FOLDER -> FolderSource(comic.file)
     }
+}
+
+class MhtmlSource(file: File) : ComicSource {
+    private val pages: List<ByteArray> by lazy { Mhtml.extractImages(file.readBytes()) }
+
+    override val pageCount: Int get() = pages.size
+
+    override fun pageBytes(index: Int): ByteArray = pages[index]
+
+    override fun pageSize(index: Int): IntSize? = imageSize(readPrefix(pages[index].inputStream()))
+
+    override fun close() = Unit
 }
 
 class ZipSource(file: File, allowNested: Boolean = true) : ComicSource {

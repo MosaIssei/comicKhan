@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -92,6 +93,7 @@ private fun kindIcon(kind: ComicKind): ImageVector = when (kind) {
     ComicKind.ZIP -> Icons.Filled.MenuBook
     ComicKind.RAR -> Icons.Filled.Archive
     ComicKind.PDF -> Icons.Filled.PictureAsPdf
+    ComicKind.MHTML -> Icons.Filled.Language
     ComicKind.FOLDER -> Icons.Filled.Image
 }
 
@@ -99,6 +101,7 @@ private fun kindLabel(kind: ComicKind): Int = when (kind) {
     ComicKind.ZIP -> R.string.kind_zip
     ComicKind.RAR -> R.string.kind_rar
     ComicKind.PDF -> R.string.kind_pdf
+    ComicKind.MHTML -> R.string.kind_mhtml
     ComicKind.FOLDER -> R.string.kind_folder
 }
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,12 +51,14 @@ import java.io.File
 private fun kindIcon(kind: Kind): ImageVector = when (kind) {
     Kind.ZIP -> Icons.Filled.MenuBook
     Kind.RAR -> Icons.Filled.Archive
+    Kind.MHTML -> Icons.Filled.Language
     Kind.FOLDER -> Icons.Filled.Image
 }
 
 private fun kindLabel(kind: Kind): String = when (kind) {
     Kind.ZIP -> "آرشیو ZIP"
     Kind.RAR -> "آرشیو RAR"
+    Kind.MHTML -> "صفحهٔ وب (MHTML)"
     Kind.FOLDER -> "پوشهٔ تصاویر"
 }
 

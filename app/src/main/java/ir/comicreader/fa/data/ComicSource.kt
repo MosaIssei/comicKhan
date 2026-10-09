@@ -28,6 +28,7 @@ object ComicSourceFactory {
         ComicKind.ZIP -> ZipComicSource(context, item)
         ComicKind.RAR -> RarComicSource(context, item)
         ComicKind.PDF -> PdfComicSource(context, item)
+        ComicKind.MHTML -> MhtmlComicSource(context, item)
         ComicKind.FOLDER -> FolderComicSource(context, item)
     }
 }
@@ -42,5 +43,6 @@ fun kindForName(name: String): ComicKind? = when (name.substringAfterLast('.', "
     "cbz", "zip" -> ComicKind.ZIP
     "cbr", "rar" -> ComicKind.RAR
     "pdf" -> ComicKind.PDF
+    "mht", "mhtml" -> ComicKind.MHTML
     else -> null
 }
