@@ -126,7 +126,7 @@ private fun bucketSize(px: Float): Int {
     return (steps * 512).coerceIn(512, ReaderViewModel.MAX_DIM)
 }
 
-private const val REGION_CAP = 3072
+private const val REGION_CAP = 4096
 
 private fun regionSample(rect: Rect): Int {
     val longEdge = max(rect.width(), rect.height())
@@ -624,30 +624,53 @@ private fun RegionImage(
         return
     }
 
-    val srcRect = remember(srcSize, content, box, scale, offset) {
-        visibleSourceRect(content, box, scale, offset, srcSize)
-    }
-    val sample = remember(srcRect) { regionSample(srcRect) }
-    val region by produceState<ImageBitmap?>(initialValue = null, index, srcRect, sample) {
-        value = vm.pageRegion(index, srcRect, sample)
+    // Grid-snapped decode window (about 2x the visible area, aligned to steps of one
+    // viewport). The key changes only when panning crosses a step, so most pans just
+    // translate the already-decoded bitmap instead of re-decoding every frame.
+    val viewport = visibleSourceRect(content, box, scale, offset, srcSize)
+    val cellW = max(1, viewport.width())
+    val cellH = max(1, viewport.height())
+    val gx = (viewport.left / cellW) * cellW
+    val gy = (viewport.top / cellH) * cellH
+    val decodeRect = Rect(
+        gx.coerceAtLeast(0),
+        gy.coerceAtLeast(0),
+        (gx + cellW * 2).coerceAtMost(srcSize.width),
+        (gy + cellH * 2).coerceAtMost(srcSize.height),
+    )
+
+    var current by remember(index) { mutableStateOf<Pair<Rect, ImageBitmap>?>(null) }
+    LaunchedEffect(index, decodeRect) {
+        val bitmap = vm.pageRegion(index, decodeRect, regionSample(decodeRect))
+        if (bitmap != null) current = decodeRect to bitmap
     }
 
+    val shown = current
+    if (shown == null) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = Color.White) }
+        return
+    }
+    val rect = shown.first
+    val image = shown.second
+
+    val contentW = content.width * scale
+    val contentH = content.height * scale
+    val left = box.width / 2f - contentW / 2f + offset.x
+    val top = box.height / 2f - contentH / 2f + offset.y
+    val kx = contentW / srcSize.width.toFloat()
+    val ky = contentH / srcSize.height.toFloat()
+
     Canvas(Modifier.fillMaxSize()) {
-        val image = region ?: return@Canvas
-        val contentW = content.width * scale
-        val contentH = content.height * scale
-        val left = box.width / 2f - contentW / 2f + offset.x
-        val top = box.height / 2f - contentH / 2f + offset.y
-        val kx = contentW / srcSize.width.toFloat()
-        val ky = contentH / srcSize.height.toFloat()
-        val dstLeft = left + srcRect.left * kx
-        val dstTop = top + srcRect.top * ky
-        val dstW = srcRect.width() * kx
-        val dstH = srcRect.height() * ky
         drawImage(
             image = image,
-            dstOffset = IntOffset(dstLeft.roundToInt(), dstTop.roundToInt()),
-            dstSize = IntSize(dstW.roundToInt().coerceAtLeast(1), dstH.roundToInt().coerceAtLeast(1)),
+            dstOffset = IntOffset(
+                (left + rect.left * kx).roundToInt(),
+                (top + rect.top * ky).roundToInt(),
+            ),
+            dstSize = IntSize(
+                (rect.width() * kx).roundToInt().coerceAtLeast(1),
+                (rect.height() * ky).roundToInt().coerceAtLeast(1),
+            ),
             colorFilter = colorFilter,
             filterQuality = FilterQuality.High,
         )

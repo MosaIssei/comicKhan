@@ -21,15 +21,24 @@ object RegionDecode {
     }
 
     @Suppress("DEPRECATION")
+    fun newDecoder(bytes: ByteArray): BitmapRegionDecoder? =
+        BitmapRegionDecoder.newInstance(ByteArrayInputStream(bytes), false)
+
+    /** Decodes [rect] using an existing [decoder] (create one with [newDecoder]). */
+    fun decode(decoder: BitmapRegionDecoder, rect: Rect, sample: Int): Bitmap? {
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample.coerceAtLeast(1)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPreferQualityOverSpeed = true
+        }
+        return decoder.decodeRegion(rect, opts)
+    }
+
+    @Suppress("DEPRECATION")
     fun region(bytes: ByteArray, rect: Rect, sample: Int): Bitmap? {
-        val decoder = BitmapRegionDecoder.newInstance(ByteArrayInputStream(bytes), false) ?: return null
+        val decoder = newDecoder(bytes) ?: return null
         try {
-            val opts = BitmapFactory.Options().apply {
-                inSampleSize = sample.coerceAtLeast(1)
-                inPreferredConfig = Bitmap.Config.ARGB_8888
-                inPreferQualityOverSpeed = true
-            }
-            return decoder.decodeRegion(rect, opts)
+            return decode(decoder, rect, sample)
         } finally {
             runCatching { decoder.recycle() }
         }

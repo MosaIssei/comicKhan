@@ -1,6 +1,7 @@
 package ir.comicreader.fa.ui.reader
 
 import android.app.Application
+import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import android.util.LruCache
 import androidx.compose.runtime.getValue
@@ -16,6 +17,8 @@ import ir.comicreader.fa.data.ComicSourceFactory
 import ir.comicreader.fa.data.RegionDecode
 import ir.comicreader.fa.data.model.ComicItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
@@ -25,6 +28,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val cache = LruCache<String, ImageBitmap>(2)
     private val regionCache = LruCache<String, ImageBitmap>(6)
     private val bytesCache = LruCache<Int, ByteArray>(2)
+    private val decoderLock = Mutex()
+    private val decoderCache = object : LruCache<Int, BitmapRegionDecoder>(1) {
+        override fun entryRemoved(evicted: Boolean, key: Int, oldValue: BitmapRegionDecoder, newValue: BitmapRegionDecoder?) {
+            runCatching { oldValue.recycle() }
+        }
+    }
 
     /** Region/tile decoding is used unless auto-crop needs the whole page. */
     val useRegionDecoding: Boolean get() = source?.supportsRegion == true && !autoCrop
@@ -46,6 +55,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             autoCrop = enabled
             cache.evictAll()
             regionCache.evictAll()
+            decoderCache.evictAll()
         }
     }
 
@@ -60,8 +70,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val key = index.toString() + ":" + rect.left + "," + rect.top + "," + rect.right + "," + rect.bottom + ":" + sample
         regionCache.get(key)?.let { return@withContext it }
         val bytes = pageBytes(index) ?: return@withContext null
-        val bitmap = runCatching { RegionDecode.region(bytes, rect, sample) }.getOrNull()
-            ?: return@withContext null
+        val bitmap = decoderLock.withLock {
+            val decoder = decoderCache.get(index)
+                ?: RegionDecode.newDecoder(bytes)?.also { decoderCache.put(index, it) }
+                ?: return@withContext null
+            runCatching { RegionDecode.decode(decoder, rect, sample) }.getOrNull()
+        } ?: return@withContext null
         val image = bitmap.asImageBitmap()
         regionCache.put(key, image)
         image
@@ -117,6 +131,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         cache.evictAll()
         regionCache.evictAll()
         bytesCache.evictAll()
+        decoderCache.evictAll()
     }
 
     override fun onCleared() {
