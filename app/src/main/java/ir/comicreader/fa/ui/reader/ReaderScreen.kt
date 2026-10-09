@@ -288,14 +288,14 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 val density = LocalDensity.current
                 val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
                 val horizontal = rememberScrollState()
-                var pendingScrollX by remember { mutableStateOf<Float?>(null) }
+                var pendingScrollX by remember { mutableStateOf<Int?>(null) }
 
                 // Applied after the new (zoomed) layout exists, so the point under the fingers
-                // stays put instead of jumping.
+                // stays put instead of jumping. (ScrollState works in integer pixels.)
                 LaunchedEffect(webtoonZoom) {
                     pendingScrollX?.let { target ->
                         pendingScrollX = null
-                        horizontal.scrollTo(target.coerceIn(0f, horizontal.maxValue.toFloat()))
+                        horizontal.scrollTo(target.coerceIn(0, horizontal.maxValue))
                     }
                 }
 
@@ -316,7 +316,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                                         if (factor != 1f) {
                                             val centroid = event.calculateCentroid()
                                             // Keep the horizontal point under the fingers fixed.
-                                            pendingScrollX = (horizontal.value + centroid.x) * factor - centroid.x
+                                            pendingScrollX =
+                                                (((horizontal.value + centroid.x) * factor) - centroid.x).roundToInt()
                                             webtoonZoom = newZoom
                                         }
                                         event.changes.forEach { if (it.positionChanged()) it.consume() }
