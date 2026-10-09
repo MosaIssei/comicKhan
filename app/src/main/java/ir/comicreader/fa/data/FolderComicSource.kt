@@ -14,7 +14,7 @@ class FolderComicSource(
 ) : ComicSource {
 
     private val pages: List<Uri> = Saf
-        .listChildrenOf(context.contentResolver, item.uri, item.uri)
+        .listChildrenOf(context.contentResolver, item.uri)
         .filter { !it.isDir && isImageName(it.name) }
         .sortedWith(compareBy(Ordering.Natural) { it.name })
         .map { it.uri }

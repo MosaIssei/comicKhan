@@ -3,9 +3,11 @@
     <string name="app_name">کمیک‌خوان</string>
 
     <string name="pick_folder">انتخاب پوشه</string>
-    <string name="pick_folder_hint">برای شروع، پوشه‌ای حاوی فایل‌های کمیک (CBZ/ZIP) یا پوشه‌های تصویر را انتخاب کنید.</string>
+    <string name="pick_folder_hint">برای شروع، پوشه‌ای حاوی فایل‌های کمیک (CBZ/ZIP/CBR/RAR/PDF) یا پوشه‌های تصویر را انتخاب کنید.</string>
     <string name="change_folder">تغییر پوشه</string>
     <string name="refresh">بازخوانی</string>
+    <string name="open_file">باز کردن فایل</string>
+    <string name="unsupported_file">این نوع فایل پشتیبانی نمی‌شود</string>
 
     <string name="empty_library">چیزی پیدا نشد</string>
     <string name="empty_library_hint">در پوشهٔ انتخابی هیچ فایل CBZ/ZIP یا پوشهٔ تصویری نبود.</string>

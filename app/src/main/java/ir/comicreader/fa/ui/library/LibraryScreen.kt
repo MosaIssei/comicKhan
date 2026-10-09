@@ -1,11 +1,14 @@
 package ir.comicreader.fa.ui.library
 
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
@@ -30,19 +34,27 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ir.comicreader.fa.R
+import ir.comicreader.fa.data.Saf
+import ir.comicreader.fa.data.Thumbnails
+import ir.comicreader.fa.data.kindForName
 import ir.comicreader.fa.data.model.ComicItem
 import ir.comicreader.fa.data.model.ComicKind
 
@@ -50,16 +62,37 @@ import ir.comicreader.fa.data.model.ComicKind
 @Composable
 fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
     val state by vm.state.collectAsState()
+    val context = LocalContext.current
 
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri -> if (uri != null) vm.onFolderPicked(uri) }
+
+    val openFile = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            Saf.takePermission(context, uri)
+            val info = Saf.queryFileInfo(context.contentResolver, uri)
+            val name = info?.first ?: "comic"
+            val size = info?.second ?: 0L
+            val kind = kindForName(name)
+            if (kind != null) {
+                onOpen(ComicItem(name, uri, kind, size))
+            } else {
+                Toast.makeText(context, R.string.unsupported_file, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
+                    IconButton(onClick = { openFile.launch(arrayOf("*/*")) }) {
+                        Icon(Icons.Filled.InsertDriveFile, contentDescription = stringResource(R.string.open_file))
+                    }
                     if (state.hasFolder) {
                         IconButton(onClick = { vm.refresh() }) {
                             Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
@@ -85,13 +118,12 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
                     else stringResource(R.string.app_name),
                     message = if (state.hasFolder) stringResource(R.string.empty_library_hint)
                     else stringResource(R.string.pick_folder_hint),
-                    actionLabel = if (state.hasFolder) stringResource(R.string.change_folder)
-                    else stringResource(R.string.pick_folder),
-                    onAction = { pickFolder.launch(null) },
+                    onPickFolder = { pickFolder.launch(null) },
+                    onOpenFile = { openFile.launch(arrayOf("*/*")) },
                 )
 
                 else -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 150.dp),
+                    columns = GridCells.Adaptive(minSize = 140.dp),
                     contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -107,6 +139,11 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
 
 @Composable
 private fun ComicCard(comic: ComicItem, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val thumb by produceState<ImageBitmap?>(initialValue = null, comic.uri) {
+        value = Thumbnails.load(context, comic)
+    }
+
     Card(onClick = onClick, shape = RoundedCornerShape(14.dp)) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Box(
@@ -115,16 +152,26 @@ private fun ComicCard(comic: ComicItem, onClick: () -> Unit) {
                     .aspectRatio(0.72f),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = when (comic.kind) {
-                        ComicKind.ZIP -> Icons.Filled.MenuBook
-                        ComicKind.RAR -> Icons.Filled.Archive
-                        ComicKind.PDF -> Icons.Filled.PictureAsPdf
-                        ComicKind.FOLDER -> Icons.Filled.Image
-                    },
-                    contentDescription = null,
-                    modifier = Modifier.height(48.dp),
-                )
+                val image = thumb
+                if (image != null) {
+                    Image(
+                        bitmap = image,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        imageVector = when (comic.kind) {
+                            ComicKind.ZIP -> Icons.Filled.MenuBook
+                            ComicKind.RAR -> Icons.Filled.Archive
+                            ComicKind.PDF -> Icons.Filled.PictureAsPdf
+                            ComicKind.FOLDER -> Icons.Filled.Image
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.height(48.dp),
+                    )
+                }
             }
             Text(
                 text = comic.name,
@@ -156,8 +203,8 @@ private fun ComicCard(comic: ComicItem, onClick: () -> Unit) {
 private fun EmptyLibrary(
     title: String,
     message: String,
-    actionLabel: String,
-    onAction: () -> Unit,
+    onPickFolder: () -> Unit,
+    onOpenFile: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -174,12 +221,11 @@ private fun EmptyLibrary(
         Spacer(Modifier.height(16.dp))
         Text(text = title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-        )
+        Text(text = message, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onAction) { Text(actionLabel) }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onPickFolder) { Text(stringResource(R.string.pick_folder)) }
+            OutlinedButton(onClick = onOpenFile) { Text(stringResource(R.string.open_file)) }
+        }
     }
 }

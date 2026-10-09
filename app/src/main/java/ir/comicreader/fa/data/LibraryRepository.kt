@@ -11,19 +11,26 @@ class LibraryRepository(private val context: Context) {
 
     suspend fun scan(treeUri: Uri): List<ComicItem> = withContext(Dispatchers.IO) {
         val cr = context.contentResolver
-        Saf.listChildren(cr, treeUri).mapNotNull { entry ->
+        val items = ArrayList<ComicItem>()
+
+        // The picked folder itself counts as a comic when it directly holds images.
+        val rootDoc = Saf.rootDocumentUri(treeUri)
+        if (Saf.hasImageChild(cr, rootDoc)) {
+            val rootName = Saf.displayName(cr, rootDoc) ?: "پوشه"
+            items += ComicItem(rootName, rootDoc, ComicKind.FOLDER)
+        }
+
+        for (entry in Saf.listChildren(cr, treeUri)) {
             if (entry.isDir) {
-                if (Saf.hasImageChild(cr, treeUri, entry.uri)) {
-                    ComicItem(entry.name, entry.uri, ComicKind.FOLDER)
-                } else null
+                if (Saf.hasImageChild(cr, entry.uri)) {
+                    items += ComicItem(entry.name, entry.uri, ComicKind.FOLDER)
+                }
             } else {
-                when (entry.name.substringAfterLast('.', "").lowercase()) {
-                    "cbz", "zip" -> ComicItem(entry.name, entry.uri, ComicKind.ZIP, entry.size)
-                    "cbr", "rar" -> ComicItem(entry.name, entry.uri, ComicKind.RAR, entry.size)
-                    "pdf" -> ComicItem(entry.name, entry.uri, ComicKind.PDF, entry.size)
-                    else -> null
+                kindForName(entry.name)?.let { kind ->
+                    items += ComicItem(entry.name, entry.uri, kind, entry.size)
                 }
             }
-        }.sortedWith(compareBy(Ordering.Natural) { it.name })
+        }
+        items.sortedWith(compareBy(Ordering.Natural) { it.name })
     }
 }

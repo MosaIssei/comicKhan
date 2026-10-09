@@ -12,10 +12,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -25,6 +28,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +38,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +55,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ir.comicreader.fa.R
 import ir.comicreader.fa.data.Prefs
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
@@ -62,6 +69,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
     val pageCount = vm.pageCount
     val pagerState = rememberPagerState(pageCount = { vm.pageCount })
+    val scope = rememberCoroutineScope()
 
     BackHandler(onBack = onBack)
 
@@ -107,6 +115,45 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     rtl = !rtl
                     prefs.mangaRightToLeft = rtl
                 },
+            )
+        }
+
+        AnimatedVisibility(
+            visible = chromeVisible && pageCount > 1,
+            enter = fadeIn() + slideInVertically { it },
+            exit = fadeOut() + slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            ReaderBottomBar(
+                current = pagerState.currentPage,
+                total = pageCount,
+                onSeek = { target -> scope.launch { pagerState.scrollToPage(target) } },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderBottomBar(current: Int, total: Int, onSeek: (Int) -> Unit) {
+    Surface(color = Color.Black.copy(alpha = 0.65f)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.page_of, current + 1, total),
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Spacer(Modifier.width(12.dp))
+            Slider(
+                value = current.toFloat(),
+                onValueChange = { onSeek(it.roundToInt()) },
+                valueRange = 0f..(total - 1).coerceAtLeast(0).toFloat(),
+                modifier = Modifier.weight(1f),
             )
         }
     }

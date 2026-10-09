@@ -30,3 +30,11 @@ internal val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp"
 
 internal fun isImageName(name: String): Boolean =
     name.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+
+/** Maps a file name to a supported comic kind, or null when unsupported. */
+fun kindForName(name: String): ComicKind? = when (name.substringAfterLast('.', "").lowercase()) {
+    "cbz", "zip" -> ComicKind.ZIP
+    "cbr", "rar" -> ComicKind.RAR
+    "pdf" -> ComicKind.PDF
+    else -> null
+}
