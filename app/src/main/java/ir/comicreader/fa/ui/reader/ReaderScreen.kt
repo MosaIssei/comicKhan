@@ -288,21 +288,15 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
             continuous -> {
                 val density = LocalDensity.current
                 val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
-                val horizontal = rememberScrollState()
                 var boxSize by remember { mutableStateOf(IntSize.Zero) }
                 var gestureZoom by remember { mutableFloatStateOf(1f) }
                 var focal by remember { mutableStateOf(Offset.Zero) }
-                var pendingScrollX by remember { mutableStateOf<Int?>(null) }
+                var panX by remember { mutableStateOf(0f) }
                 var pendingVFactor by remember { mutableStateOf<Float?>(null) }
                 var pendingVY by remember { mutableStateOf(0f) }
 
-                // Applied once the new (zoomed) layout exists, so the point under the fingers
-                // stays put instead of jumping. (ScrollState works in integer pixels.)
+                // Vertical correction, applied once the new (zoomed) layout exists.
                 LaunchedEffect(webtoonZoom) {
-                    pendingScrollX?.let { target ->
-                        pendingScrollX = null
-                        horizontal.scrollTo(target.coerceIn(0, horizontal.maxValue))
-                    }
                     pendingVFactor?.let { factor ->
                         pendingVFactor = null
                         if (factor != 1f) {
@@ -313,18 +307,22 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 }
 
                 val contentWidthPx = with(density) { (baseWidth * webtoonZoom).toPx() }
+                val maxPan = (contentWidthPx - boxSize.width).coerceAtLeast(0f)
+                val pan = panX.coerceIn(0f, maxPan)
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .onSizeChanged { boxSize = it }
-                        .horizontalScroll(horizontal)
                         .pointerInput(Unit) {
-                            // Pinch (two fingers) scales visually (no reflow) for a smooth gesture;
-                            // the list reflows once on release. Single-finger drags scroll the list.
+                            // Pinch = visual zoom (no reflow) so it stays smooth; on release the list
+                            // reflows once together with the pan, so nothing jumps. A horizontal drag
+                            // pans when zoomed in; a vertical drag scrolls the list.
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
                                 var pinching = false
+                                var dragging = false
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     if (event.changes.none { it.pressed }) {
@@ -332,8 +330,10 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                                             val newZoom = (webtoonZoom * gestureZoom).coerceIn(1f, 4f)
                                             val factor = newZoom / webtoonZoom
                                             if (factor != 1f) {
-                                                pendingScrollX =
-                                                    (((horizontal.value + focal.x) * factor) - focal.x).roundToInt()
+                                                val newMax =
+                                                    (with(density) { (baseWidth * newZoom).toPx() } - boxSize.width)
+                                                        .coerceAtLeast(0f)
+                                                panX = ((panX + focal.x) * factor - focal.x).coerceIn(0f, newMax)
                                                 pendingVFactor = factor
                                                 pendingVY = focal.y
                                             }
@@ -348,6 +348,15 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                                         val total = (webtoonZoom * gestureZoom * event.calculateZoom()).coerceIn(1f, 4f)
                                         gestureZoom = total / webtoonZoom
                                         event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                    } else if (!pinching) {
+                                        val change = event.changes.firstOrNull { it.pressed } ?: continue
+                                        val delta = change.positionChange()
+                                        if (delta == Offset.Zero) continue
+                                        if (dragging || (maxPan > 0f && abs(delta.x) >= abs(delta.y))) {
+                                            dragging = true
+                                            change.consume()
+                                            panX = (panX - delta.x).coerceIn(0f, maxPan)
+                                        }
                                     }
                                 }
                             }
@@ -359,11 +368,12 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                             .width(baseWidth * webtoonZoom)
                             .fillMaxHeight()
                             .graphicsLayer(
+                                translationX = -pan,
                                 scaleX = gestureZoom,
                                 scaleY = gestureZoom,
                                 transformOrigin = if (boxSize.width > 0 && contentWidthPx > 0f) {
                                     TransformOrigin(
-                                        ((focal.x + horizontal.value) / contentWidthPx).coerceIn(0f, 1f),
+                                        ((focal.x + pan) / contentWidthPx).coerceIn(0f, 1f),
                                         (focal.y / boxSize.height).coerceIn(0f, 1f),
                                     )
                                 } else {
