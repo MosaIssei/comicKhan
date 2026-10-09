@@ -33,7 +33,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     var autoCrop by mutableStateOf(false)
         private set
 
-    fun setAutoCrop(enabled: Boolean) {
+    fun applyAutoCrop(enabled: Boolean) {
         if (autoCrop != enabled) {
             autoCrop = enabled
             cache.evictAll()

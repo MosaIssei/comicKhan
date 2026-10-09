@@ -152,7 +152,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(autoCrop) { vm.setAutoCrop(autoCrop) }
+    LaunchedEffect(autoCrop) { vm.applyAutoCrop(autoCrop) }
 
     BackHandler(onBack = onBack)
 
