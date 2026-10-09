@@ -29,24 +29,33 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Cache debug keystore (keep signature stable across builds)
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-comickhan-v1
+      - name: Decode release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/comickhan.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/comickhan.jks" >> "$GITHUB_ENV"
+          else
+            echo "No KEYSTORE_BASE64 secret set - building with debug signing (not for distribution)."
+          fi
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace --configure-on-demand
+      - name: Build release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace --configure-on-demand
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: comicreader-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: comickhan-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: Attach APK to GitHub Release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk
+          files: app/build/outputs/apk/release/*.apk

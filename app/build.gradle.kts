@@ -12,8 +12,22 @@ android {
         applicationId = "ir.comicreader.fa"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // CI passes a strictly increasing version so devices accept updates.
+        // Set these in gradle.properties (comickhan.versionCode / comickhan.versionName).
+        versionCode = (project.findProperty("comickhan.versionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("comickhan.versionName") as String?) ?: "1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            val path = System.getenv("KEYSTORE_FILE")
+            if (!path.isNullOrBlank() && file(path).exists()) {
+                storeFile = file(path)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -23,6 +37,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use the release key when provided (CI secrets); otherwise fall back to
+            // debug signing so local/CI builds still produce an installable APK.
+            val hasReleaseKey = !System.getenv("KEYSTORE_FILE").isNullOrBlank() &&
+                file(System.getenv("KEYSTORE_FILE")!!).exists()
+            signingConfig = if (hasReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
