@@ -1,19 +1,29 @@
 package ir.comicreader.fa.desktop.data
 
+import androidx.compose.ui.unit.IntSize
 import com.github.junrar.Archive
 import com.github.junrar.rarfile.FileHeader
 import java.io.File
+import java.io.InputStream
 import java.util.zip.ZipFile
 
 private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "avif")
 
+private const val PREFIX_BYTES = 128 * 1024
+
 fun isImageName(name: String): Boolean =
     name.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+
+private fun readPrefix(stream: InputStream): ByteArray = stream.use { it.readNBytes(PREFIX_BYTES) }
 
 /** Ordered set of pages for one comic, read lazily as encoded bytes. */
 interface ComicSource {
     val pageCount: Int
     fun pageBytes(index: Int): ByteArray
+
+    /** Intrinsic size of a page (header-only read), used to size items before decode. */
+    fun pageSize(index: Int): IntSize? = null
+
     fun close()
 }
 
@@ -41,6 +51,9 @@ class ZipSource(file: File) : ComicSource {
         return zip.getInputStream(entry).use { it.readBytes() }
     }
 
+    override fun pageSize(index: Int): IntSize? =
+        imageSize(readPrefix(zip.getInputStream(zip.getEntry(entries[index]))))
+
     override fun close() = zip.close()
 }
 
@@ -52,6 +65,9 @@ class FolderSource(dir: File) : ComicSource {
     override val pageCount: Int get() = files.size
 
     override fun pageBytes(index: Int): ByteArray = files[index].readBytes()
+
+    override fun pageSize(index: Int): IntSize? =
+        imageSize(readPrefix(files[index].inputStream()))
 
     override fun close() = Unit
 }
@@ -67,6 +83,9 @@ class RarSource(file: File) : ComicSource {
 
     override fun pageBytes(index: Int): ByteArray =
         archive.getInputStream(headers[index]).use { it.readBytes() }
+
+    override fun pageSize(index: Int): IntSize? =
+        imageSize(readPrefix(archive.getInputStream(headers[index])))
 
     override fun close() = archive.close()
 }

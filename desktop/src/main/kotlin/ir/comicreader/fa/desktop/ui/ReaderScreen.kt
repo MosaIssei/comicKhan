@@ -98,6 +98,19 @@ fun ReaderScreen(comic: Comic, onBack: () -> Unit) {
 
     val colorFilter = remember(contrast, invert) { imageColorFilter(contrast, invert) }
 
+    // Pre-read every page's aspect so webtoon items have a stable height (no jumping).
+    var aspects by remember(comic) { mutableStateOf<List<Float>?>(null) }
+    LaunchedEffect(webtoon, pageCount) {
+        if (webtoon && aspects == null) {
+            aspects = withContext(Dispatchers.IO) {
+                (0 until pageCount).map { i ->
+                    val s = source.pageSize(i)
+                    if (s != null && s.height > 0) s.width.toFloat() / s.height else DEFAULT_ASPECT
+                }
+            }
+        }
+    }
+
     fun goTo(target: Int) {
         val bounded = target.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
         scope.launch {
@@ -125,9 +138,24 @@ fun ReaderScreen(comic: Comic, onBack: () -> Unit) {
                 Text("صفحه‌ای پیدا نشد", color = Color.White)
             }
 
-            webtoon -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                items(count = pageCount, key = { it }) { i ->
-                    WebtoonPage(source, i, colorFilter)
+            webtoon -> {
+                val a = aspects
+                if (a == null) {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        CircularProgressIndicator(color = Color.White)
+                    }
+                } else {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        items(count = pageCount, key = { it }) { i ->
+                            WebtoonPage(
+                                source = source,
+                                index = i,
+                                aspect = a.getOrElse(i) { DEFAULT_ASPECT },
+                                colorFilter = colorFilter,
+                                onTap = { chrome = !chrome },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -307,23 +335,29 @@ private fun PagedPage(
 }
 
 @Composable
-private fun WebtoonPage(source: ComicSource, index: Int, colorFilter: ColorFilter?) {
+private fun WebtoonPage(
+    source: ComicSource,
+    index: Int,
+    aspect: Float,
+    colorFilter: ColorFilter?,
+    onTap: () -> Unit,
+) {
     val bitmap by produceState<ImageBitmap?>(initialValue = null, index) {
         value = withContext(Dispatchers.IO) {
             runCatching { decodeImage(source.pageBytes(index)) }.getOrNull()
         }
     }
-    val image = bitmap
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black),
+            .aspectRatio(aspect)
+            .background(Color.Black)
+            .pointerInput(Unit) { detectTapGestures { onTap() } },
         contentAlignment = Alignment.Center,
     ) {
+        val image = bitmap
         if (image == null) {
-            Box(Modifier.fillMaxWidth().height(360.dp), Alignment.Center) {
-                CircularProgressIndicator(color = Color.White)
-            }
+            CircularProgressIndicator(color = Color.White)
         } else {
             Image(
                 bitmap = image,
@@ -331,13 +365,13 @@ private fun WebtoonPage(source: ComicSource, index: Int, colorFilter: ColorFilte
                 contentScale = ContentScale.FillWidth,
                 colorFilter = colorFilter,
                 filterQuality = FilterQuality.High,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(image.width.toFloat() / image.height),
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
 }
+
+private const val DEFAULT_ASPECT = 0.7f
 
 @Composable
 private fun SettingsPanel(

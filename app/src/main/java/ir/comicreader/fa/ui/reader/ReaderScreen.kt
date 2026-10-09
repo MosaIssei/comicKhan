@@ -729,32 +729,32 @@ private fun ContinuousPage(
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val widthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
+    val size by produceState<IntSize?>(initialValue = null, index) { value = vm.pageSize(index) }
     val bitmap by produceState<ImageBitmap?>(initialValue = null, index, widthPx) {
         value = vm.loadPage(index, ReaderViewModel.MAX_DIM, widthPx)
     }
     val image = bitmap
+    val ratio = image?.let { it.width.toFloat() / it.height }
+        ?: size?.takeIf { it.height > 0 }?.let { it.width.toFloat() / it.height }
+        ?: 0.75f
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black),
+            .aspectRatio(ratio)
+            .background(Color.Black)
+            .pointerInput(Unit) { detectTapGestures { onTap() } },
         contentAlignment = Alignment.Center,
     ) {
         if (image == null) {
-            Box(Modifier.fillMaxWidth().height(360.dp), Alignment.Center) {
-                CircularProgressIndicator(color = Color.White)
-            }
+            CircularProgressIndicator(color = Color.White)
         } else {
-            val ratio = image.width.toFloat() / image.height
             Image(
                 bitmap = image,
                 contentDescription = stringResource(R.string.cd_page),
                 contentScale = ContentScale.FillWidth,
                 colorFilter = colorFilter,
                 filterQuality = FilterQuality.High,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(ratio)
-                    .pointerInput(Unit) { detectTapGestures { onTap() } },
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
