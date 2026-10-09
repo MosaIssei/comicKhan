@@ -19,7 +19,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
-    private val cache = LruCache<Int, ImageBitmap>(2)
+    private val cache = LruCache<String, ImageBitmap>(2)
 
     var title by mutableStateOf("")
         private set
@@ -56,16 +56,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Decodes a page. [highQuality] requests a larger bitmap for zoomed-in viewing;
-     * the two variants are cached separately.
+     * Decodes a page sized for what is actually on screen: [requiredPx] is the wanted
+     * length of the long edge (already bucketed). Decoding to the display size keeps
+     * zoomed-in pages sharp (up to the source resolution) instead of a fixed cap.
      */
-    suspend fun loadPage(index: Int, highQuality: Boolean = false): ImageBitmap? = withContext(Dispatchers.IO) {
-        val key = index * 2 + if (highQuality) 1 else 0
+    suspend fun loadPage(index: Int, requiredPx: Int): ImageBitmap? = withContext(Dispatchers.IO) {
+        val target = requiredPx.coerceIn(512, MAX_DIM)
+        val key = index.toString() + "@" + target
         cache.get(key)?.let { return@withContext it }
         val src = source ?: return@withContext null
-        val maxDim = if (highQuality) HIGH_DIM else MAX_DIM
-        // ARGB_8888 doubles memory; keep a small cache but avoid OOM with largeHeap.
-        val bitmap = runCatching { src.pageBitmap(index, maxDim) }.getOrNull()
+        val bitmap = runCatching { src.pageBitmap(index, target) }.getOrNull()
             ?: return@withContext null
         val ready = if (autoCrop) {
             runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
@@ -87,8 +87,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         close()
     }
 
-    private companion object {
-        const val MAX_DIM = 2560
-        const val HIGH_DIM = 3200
+    companion object {
+        const val MAX_DIM = 4096
     }
 }

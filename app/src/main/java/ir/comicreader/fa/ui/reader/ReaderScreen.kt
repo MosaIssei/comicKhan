@@ -73,6 +73,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -110,6 +111,13 @@ private fun FitMode.toContentScale(): ContentScale = when (this) {
     FitMode.FIT -> ContentScale.Fit
     FitMode.WIDTH -> ContentScale.FillWidth
     FitMode.HEIGHT -> ContentScale.FillHeight
+}
+
+/** Rounds a wanted pixel size up to a 512px step so tiny zoom changes don't re-decode. */
+private fun bucketSize(px: Float): Int {
+    val clamped = px.coerceIn(512f, ReaderViewModel.MAX_DIM.toFloat())
+    val steps = ((clamped + 511f) / 512f).toInt()
+    return (steps * 512).coerceIn(512, ReaderViewModel.MAX_DIM)
 }
 
 private fun contrastFilter(contrast: Float): ColorFilter {
@@ -362,7 +370,6 @@ private fun PageSlot(
     var box by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
     val single = step == 1
-    val highQuality = scale > 1.1f
 
     LaunchedEffect(scale) { onZoomChanged(scale > 1.01f) }
 
@@ -459,10 +466,15 @@ private fun PageSlot(
             } else {
                 Modifier.fillMaxSize()
             }
+            val requiredPx = if (content != null) {
+                bucketSize(max(content.width, content.height) * scale)
+            } else {
+                2048
+            }
             PageImage(
                 vm = vm,
                 index = baseIndex,
-                highQuality = highQuality,
+                requiredPx = requiredPx,
                 contentScale = if (content != null) ContentScale.FillBounds else fit.toContentScale(),
                 colorFilter = colorFilter,
                 onAspect = { if (aspect != it) aspect = it },
@@ -488,7 +500,7 @@ private fun PageSlot(
                     PageImage(
                         vm = vm,
                         index = index,
-                        highQuality = false,
+                        requiredPx = 2560,
                         contentScale = fit.toContentScale(),
                         colorFilter = colorFilter,
                         onAspect = {},
@@ -506,14 +518,14 @@ private fun PageSlot(
 private fun PageImage(
     vm: ReaderViewModel,
     index: Int,
-    highQuality: Boolean,
+    requiredPx: Int,
     contentScale: ContentScale,
     colorFilter: ColorFilter?,
     onAspect: (Float) -> Unit,
     modifier: Modifier,
 ) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, index, highQuality) {
-        value = vm.loadPage(index, highQuality)
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, index, requiredPx) {
+        value = vm.loadPage(index, requiredPx)
     }
     val image = bitmap
     LaunchedEffect(image) {
@@ -528,6 +540,7 @@ private fun PageImage(
                 contentDescription = stringResource(R.string.cd_page),
                 contentScale = contentScale,
                 colorFilter = colorFilter,
+                filterQuality = FilterQuality.High,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -542,7 +555,7 @@ private fun ContinuousPage(
     onTap: () -> Unit,
 ) {
     val bitmap by produceState<ImageBitmap?>(initialValue = null, index) {
-        value = vm.loadPage(index, false)
+        value = vm.loadPage(index, 2560)
     }
     val image = bitmap
     Box(
@@ -562,6 +575,7 @@ private fun ContinuousPage(
                 contentDescription = stringResource(R.string.cd_page),
                 contentScale = ContentScale.FillWidth,
                 colorFilter = colorFilter,
+                filterQuality = FilterQuality.High,
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(ratio)
