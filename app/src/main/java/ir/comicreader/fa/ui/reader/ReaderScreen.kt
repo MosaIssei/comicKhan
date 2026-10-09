@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -66,7 +67,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
@@ -76,11 +79,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import ir.comicreader.fa.R
 import ir.comicreader.fa.data.Prefs
@@ -88,12 +94,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 enum class FitMode { FIT, WIDTH, HEIGHT }
 
 enum class OrientationMode { AUTO, PORTRAIT, LANDSCAPE }
+
+private fun contentSizeFor(boxW: Float, boxH: Float, aspect: Float, fit: FitMode): Size = when (fit) {
+    FitMode.FIT -> if (boxW / boxH >= aspect) Size(boxH * aspect, boxH) else Size(boxW, boxW / aspect)
+    FitMode.WIDTH -> Size(boxW, boxW / aspect)
+    FitMode.HEIGHT -> Size(boxH * aspect, boxH)
+}
 
 private fun FitMode.toContentScale(): ContentScale = when (this) {
     FitMode.FIT -> ContentScale.Fit
@@ -183,7 +194,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
     BackHandler(onBack = onBack)
 
-    val savedPage = remember { prefs.lastPage(vm.uri) }
+    val savedPage = remember(vm.uri) { prefs.lastPage(vm.uri) }
     LaunchedEffect(pageCount) {
         if (pageCount > 0 && savedPage > 0) seekToPage(savedPage)
     }
@@ -348,39 +359,31 @@ private fun PageSlot(
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     var aspect by remember { mutableStateOf<Float?>(null) }
+    var box by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
     val single = step == 1
-    val highQuality = scale > 1.25f
+    val highQuality = scale > 1.1f
 
     LaunchedEffect(scale) { onZoomChanged(scale > 1.01f) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(fit) {
+            .clipToBounds()
+            .onSizeChanged { box = it }
+            .pointerInput(fit, single) {
                 fun bounds(s: Float): Pair<Float, Float> {
-                    val w = size.width.toFloat()
-                    val h = size.height.toFloat()
-                    val a = aspect
-                    var contentW = w
-                    var contentH = h
-                    if (single && a != null && a > 0f) {
-                        when (fit) {
-                            FitMode.FIT -> {
-                                val v = min(w, h * a)
-                                contentW = v
-                                contentH = v / a
-                            }
-                            FitMode.WIDTH -> {
-                                contentW = w
-                                contentH = w / a
-                            }
-                            FitMode.HEIGHT -> {
-                                contentH = h
-                                contentW = h * a
-                            }
-                        }
+                    val bw = box.width.toFloat()
+                    val bh = box.height.toFloat()
+                    if (bw <= 0f || bh <= 0f) return 0f to 0f
+                    if (single) {
+                        val a = aspect ?: return 0f to 0f
+                        if (a <= 0f) return 0f to 0f
+                        val content = contentSizeFor(bw, bh, a, fit)
+                        return max(0f, (content.width * s - bw) / 2f) to
+                            max(0f, (content.height * s - bh) / 2f)
                     }
-                    return max(0f, (contentW * s - w) / 2f) to max(0f, (contentH * s - h) / 2f)
+                    return max(0f, (bw * s - bw) / 2f) to max(0f, (bh * s - bh) / 2f)
                 }
 
                 awaitEachGesture {
@@ -438,31 +441,62 @@ private fun PageSlot(
                     },
                 )
             },
+        contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
+        if (single) {
+            val a = aspect
+            val bw = box.width.toFloat()
+            val bh = box.height.toFloat()
+            val content = if (a != null && a > 0f && bw > 0f && bh > 0f) {
+                contentSizeFor(bw, bh, a, fit)
+            } else {
+                null
+            }
+            val sizeModifier = if (content != null) {
+                with(density) {
+                    Modifier.requiredSize((content.width * scale).toDp(), (content.height * scale).toDp())
+                }
+            } else {
+                Modifier.fillMaxSize()
+            }
+            PageImage(
+                vm = vm,
+                index = baseIndex,
+                highQuality = highQuality,
+                contentScale = if (content != null) ContentScale.FillBounds else fit.toContentScale(),
+                colorFilter = colorFilter,
+                onAspect = { if (aspect != it) aspect = it },
+                modifier = sizeModifier.graphicsLayer(
                     translationX = offset.x,
                     translationY = offset.y,
                 ),
-        ) {
-            val indices = (0 until step).map { baseIndex + it }.filter { it < vm.pageCount }
-            val ordered = if (rtl) indices else indices.reversed()
-            ordered.forEach { index ->
-                PageImage(
-                    vm = vm,
-                    index = index,
-                    highQuality = highQuality && single,
-                    fit = fit,
-                    colorFilter = colorFilter,
-                    onAspect = { if (single) aspect = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                )
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y,
+                    ),
+            ) {
+                val indices = (0 until step).map { baseIndex + it }.filter { it < vm.pageCount }
+                val ordered = if (rtl) indices else indices.reversed()
+                ordered.forEach { index ->
+                    PageImage(
+                        vm = vm,
+                        index = index,
+                        highQuality = false,
+                        contentScale = fit.toContentScale(),
+                        colorFilter = colorFilter,
+                        onAspect = {},
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                }
             }
         }
     }
@@ -473,7 +507,7 @@ private fun PageImage(
     vm: ReaderViewModel,
     index: Int,
     highQuality: Boolean,
-    fit: FitMode,
+    contentScale: ContentScale,
     colorFilter: ColorFilter?,
     onAspect: (Float) -> Unit,
     modifier: Modifier,
@@ -492,7 +526,7 @@ private fun PageImage(
             Image(
                 bitmap = image,
                 contentDescription = stringResource(R.string.cd_page),
-                contentScale = fit.toContentScale(),
+                contentScale = contentScale,
                 colorFilter = colorFilter,
                 modifier = Modifier.fillMaxSize(),
             )

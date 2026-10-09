@@ -15,7 +15,7 @@ internal fun decodeImageBytes(bytes: ByteArray, maxDim: Int): Bitmap? {
     }
     val opts = BitmapFactory.Options().apply {
         inSampleSize = sample
-        inPreferredConfig = Bitmap.Config.RGB_565
+        inPreferredConfig = Bitmap.Config.ARGB_8888
     }
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
 }

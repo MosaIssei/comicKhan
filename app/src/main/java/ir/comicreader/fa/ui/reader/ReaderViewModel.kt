@@ -19,7 +19,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
-    private val cache = LruCache<Int, ImageBitmap>(3)
+    private val cache = LruCache<Int, ImageBitmap>(2)
 
     var title by mutableStateOf("")
         private set
@@ -64,6 +64,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         cache.get(key)?.let { return@withContext it }
         val src = source ?: return@withContext null
         val maxDim = if (highQuality) HIGH_DIM else MAX_DIM
+        // ARGB_8888 doubles memory; keep a small cache but avoid OOM with largeHeap.
         val bitmap = runCatching { src.pageBitmap(index, maxDim) }.getOrNull()
             ?: return@withContext null
         val ready = if (autoCrop) {
@@ -88,6 +89,6 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val MAX_DIM = 2560
-        const val HIGH_DIM = 3840
+        const val HIGH_DIM = 3200
     }
 }
