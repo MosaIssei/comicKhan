@@ -19,6 +19,7 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.ComicReaderFA">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
