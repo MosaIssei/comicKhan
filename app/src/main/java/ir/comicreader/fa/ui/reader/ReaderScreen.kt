@@ -202,7 +202,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     var invert by remember { mutableStateOf(prefs.invertColors) }
     var autoCrop by remember { mutableStateOf(prefs.autoCrop) }
     var continuous by remember { mutableStateOf(prefs.continuous) }
-    var webtoonZoom by remember { mutableStateOf(prefs.webtoonZoom.coerceIn(1f, 3f)) }
+    var webtoonZoom by remember { mutableStateOf(prefs.webtoonZoom.coerceIn(1f, 4f)) }
     var orientation by remember {
         mutableStateOf(
             OrientationMode.entries[prefs.orientationOrdinal.coerceIn(0, OrientationMode.entries.size - 1)]
@@ -256,6 +256,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     }
 
     LaunchedEffect(autoCrop) { vm.applyAutoCrop(autoCrop) }
+    LaunchedEffect(webtoonZoom) { prefs.webtoonZoom = webtoonZoom }
 
     BackHandler(onBack = onBack)
 
@@ -289,7 +290,21 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .horizontalScroll(horizontal),
+                        .horizontalScroll(horizontal)
+                        .pointerInput(Unit) {
+                            // Pinch (two fingers) zooms the webtoon; single-finger drags scroll.
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    if (event.changes.none { it.pressed }) break
+                                    if (event.changes.size >= 2) {
+                                        webtoonZoom = (webtoonZoom * event.calculateZoom()).coerceIn(1f, 4f)
+                                        event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                    }
+                                }
+                            }
+                        },
                 ) {
                     LazyColumn(
                         state = listState,
@@ -382,8 +397,6 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         prefs.continuous = value
                         seekToPage(prefs.lastPage(vm.uri))
                     },
-                    webtoonZoom = webtoonZoom,
-                    onWebtoonZoom = { webtoonZoom = it; prefs.webtoonZoom = it },
                     brightness = brightness,
                     onBrightness = { brightness = it; prefs.brightness = it },
                     contrast = contrast,
@@ -508,7 +521,9 @@ private fun PageSlot(
                                 (offset.y + pan.y).coerceIn(-maxY, maxY),
                             )
                             event.changes.forEach { if (it.positionChanged()) it.consume() }
-                        } else if (!zooming) {
+                        } else if (!zooming && scale > 1.01f) {
+                            // Only pan when actually zoomed; otherwise leave the drag to the
+                            // pager so turning pages stays easy.
                             val change = event.changes.firstOrNull { it.pressed } ?: continue
                             val pan = change.positionChange()
                             if (pan != Offset.Zero) {
@@ -868,8 +883,6 @@ private fun ReaderSettings(
     onFit: (FitMode) -> Unit,
     continuous: Boolean,
     onContinuous: (Boolean) -> Unit,
-    webtoonZoom: Float,
-    onWebtoonZoom: (Float) -> Unit,
     brightness: Float,
     onBrightness: (Float) -> Unit,
     contrast: Float,
@@ -931,19 +944,6 @@ private fun ReaderSettings(
                 selected = if (continuous) 1 else 0,
                 onSelect = { onContinuous(it == 1) },
             )
-
-            if (continuous) {
-                Text(
-                    text = stringResource(R.string.webtoon_zoom),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                Slider(
-                    value = webtoonZoom,
-                    onValueChange = onWebtoonZoom,
-                    valueRange = 1f..3f,
-                )
-            }
 
             Text(
                 text = stringResource(R.string.direction),
