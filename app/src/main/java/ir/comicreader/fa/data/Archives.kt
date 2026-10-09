@@ -68,6 +68,9 @@ internal class NestedArchiveSource(
     override suspend fun pageBytes(index: Int): ByteArray? =
         childAt(index)?.let { (child, local) -> child.pageBytes(local) }
 
+    override suspend fun pageHead(index: Int, limit: Int): ByteArray? =
+        childAt(index)?.let { (child, local) -> child.pageHead(local, limit) }
+
     override val supportsRegion: Boolean
         get() = children.isNotEmpty() && children.all { it.supportsRegion }
 

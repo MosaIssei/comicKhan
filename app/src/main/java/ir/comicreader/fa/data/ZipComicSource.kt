@@ -80,6 +80,14 @@ class ZipComicSource private constructor(
         return readEntry(index)
     }
 
+    override suspend fun pageHead(index: Int, limit: Int): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val name = imageEntries.getOrNull(index) ?: return@runCatching null
+            val entry = zip.getEntry(name) ?: return@runCatching null
+            zip.getInputStream(entry).use { readPrefix(it, limit) }
+        }.getOrNull()
+    }
+
     /** ZipFile is safe for concurrent reads and each stream is independent. */
     private suspend fun readEntry(index: Int): ByteArray? = withContext(Dispatchers.IO) {
         runCatching {

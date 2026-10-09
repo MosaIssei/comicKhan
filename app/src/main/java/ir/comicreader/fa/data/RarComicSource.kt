@@ -97,6 +97,15 @@ class RarComicSource private constructor(
         }
     }
 
+    override suspend fun pageHead(index: Int, limit: Int): ByteArray? = withContext(Dispatchers.IO) {
+        lock.withLock {
+            runCatching {
+                val header = imageHeaders.getOrNull(index) ?: return@runCatching null
+                archive.getInputStream(header).use { readPrefix(it, limit) }
+            }.getOrNull()
+        }
+    }
+
     override fun close() {
         nested?.close()
         runCatching { archive.close() }

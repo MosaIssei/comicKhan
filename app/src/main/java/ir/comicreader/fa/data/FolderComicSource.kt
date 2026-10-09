@@ -33,5 +33,11 @@ class FolderComicSource(
         context.contentResolver.openInputStream(pages[index])?.use { it.readBytes() }
     }
 
+    override suspend fun pageHead(index: Int, limit: Int): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            context.contentResolver.openInputStream(pages[index])?.use { readPrefix(it, limit) }
+        }.getOrNull()
+    }
+
     override fun close() = Unit
 }

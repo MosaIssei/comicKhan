@@ -148,6 +148,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrNull()
     }
 
+    /** Aspect (width / height) of a page, read from just the file header. Never throws. */
+    suspend fun pageAspect(index: Int): Float? = withContext(Dispatchers.IO) {
+        runCatching {
+            val head = source?.pageHead(index, 128 * 1024) ?: return@runCatching null
+            RegionDecode.size(head)?.let { if (it.height > 0) it.width.toFloat() / it.height else null }
+        }.getOrNull()
+    }
+
     /** Decodes just [rect] of a page at native resolution (downsampled by [sample]). */
     suspend fun pageRegion(index: Int, rect: Rect, sample: Int): ImageBitmap? = withContext(Dispatchers.IO) {
         val key = index.toString() + ":" + rect.left + "," + rect.top + "," + rect.right + "," + rect.bottom + ":" + sample

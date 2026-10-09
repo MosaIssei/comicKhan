@@ -17,6 +17,9 @@ interface ComicSource {
     /** Raw encoded bytes of a page, when the source can provide them (for region decode). */
     suspend fun pageBytes(index: Int): ByteArray? = null
 
+    /** Just the first [limit] bytes of a page (enough for a size probe), when possible. */
+    suspend fun pageHead(index: Int, limit: Int): ByteArray? = null
+
     /** Whether region/tile decoding is available for this source. */
     val supportsRegion: Boolean get() = false
 
@@ -37,6 +40,18 @@ internal val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp"
 
 internal fun isImageName(name: String): Boolean =
     name.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+
+/** Reads up to [limit] bytes without relying on InputStream.readNBytes (API 33). */
+internal fun readPrefix(stream: java.io.InputStream, limit: Int): ByteArray {
+    val buffer = ByteArray(limit)
+    var offset = 0
+    while (offset < limit) {
+        val read = stream.read(buffer, offset, limit - offset)
+        if (read <= 0) break
+        offset += read
+    }
+    return if (offset == limit) buffer else buffer.copyOf(offset)
+}
 
 /** Maps a file name to a supported comic kind, or null when unsupported. */
 fun kindForName(name: String): ComicKind? = when (name.substringAfterLast('.', "").lowercase()) {
