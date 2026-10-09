@@ -34,6 +34,15 @@ class ZipComicSource(
         }
     }
 
+    override val supportsRegion: Boolean = true
+
+    override suspend fun pageBytes(index: Int): ByteArray? = withContext(Dispatchers.IO) {
+        lock.withLock {
+            val entry = zip.getEntry(pageNames[index]) ?: return@withLock null
+            zip.getInputStream(entry).use { it.readBytes() }
+        }
+    }
+
     override fun close() {
         runCatching { zip.close() }
         runCatching { localFile.delete() }

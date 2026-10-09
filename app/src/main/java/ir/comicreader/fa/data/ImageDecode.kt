@@ -27,6 +27,8 @@ internal fun decodeImageBytes(bytes: ByteArray, maxDim: Int): Bitmap? {
     val opts = BitmapFactory.Options().apply {
         inSampleSize = sample
         inPreferredConfig = Bitmap.Config.ARGB_8888
+        @Suppress("DEPRECATION")
+        inPreferQualityOverSpeed = true
     }
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
 }

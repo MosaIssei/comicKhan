@@ -42,6 +42,14 @@ class RarComicSource(
         }
     }
 
+    override val supportsRegion: Boolean = true
+
+    override suspend fun pageBytes(index: Int): ByteArray? = withContext(Dispatchers.IO) {
+        lock.withLock {
+            archive.getInputStream(headers[index]).use { it.readBytes() }
+        }
+    }
+
     override fun close() {
         runCatching { archive.close() }
         runCatching { localFile.delete() }

@@ -4,12 +4,14 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.graphics.Rect
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -87,6 +89,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import ir.comicreader.fa.R
@@ -94,6 +97,8 @@ import ir.comicreader.fa.data.Prefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -118,6 +123,43 @@ private fun bucketSize(px: Float): Int {
     val clamped = px.coerceIn(512f, ReaderViewModel.MAX_DIM.toFloat())
     val steps = ((clamped + 511f) / 512f).toInt()
     return (steps * 512).coerceIn(512, ReaderViewModel.MAX_DIM)
+}
+
+private const val REGION_CAP = 3072
+
+private fun regionSample(rect: Rect): Int {
+    val longEdge = max(rect.width(), rect.height())
+    var sample = 1
+    while (longEdge / sample > REGION_CAP) sample *= 2
+    return sample
+}
+
+/** The part of the page (in source pixels) currently visible in the viewport. */
+private fun visibleSourceRect(
+    content: Size,
+    box: IntSize,
+    scale: Float,
+    offset: Offset,
+    src: IntSize,
+): Rect {
+    val contentW = content.width * scale
+    val contentH = content.height * scale
+    val left = box.width / 2f - contentW / 2f + offset.x
+    val top = box.height / 2f - contentH / 2f + offset.y
+    val sxPerPx = src.width / contentW
+    val syPerPx = src.height / contentH
+    val l = ((0f - left) * sxPerPx)
+    val t = ((0f - top) * syPerPx)
+    val r = ((box.width - left) * sxPerPx)
+    val b = ((box.height - top) * syPerPx)
+    val rect = Rect(
+        floor(l.toDouble()).toInt().coerceAtLeast(0),
+        floor(t.toDouble()).toInt().coerceAtLeast(0),
+        ceil(r.toDouble()).toInt().coerceAtMost(src.width),
+        ceil(b.toDouble()).toInt().coerceAtMost(src.height),
+    )
+    if (rect.width() <= 0 || rect.height() <= 0) return Rect(0, 0, src.width, src.height)
+    return rect
 }
 
 private fun contrastFilter(contrast: Float): ColorFilter {
@@ -459,30 +501,43 @@ private fun PageSlot(
             } else {
                 null
             }
-            val sizeModifier = if (content != null) {
-                with(density) {
-                    Modifier.requiredSize((content.width * scale).toDp(), (content.height * scale).toDp())
+            if (vm.useRegionDecoding) {
+                RegionImage(
+                    vm = vm,
+                    index = baseIndex,
+                    content = content,
+                    box = box,
+                    scale = scale,
+                    offset = offset,
+                    colorFilter = colorFilter,
+                    onAspect = { if (aspect != it) aspect = it },
+                )
+            } else {
+                val sizeModifier = if (content != null) {
+                    with(density) {
+                        Modifier.requiredSize((content.width * scale).toDp(), (content.height * scale).toDp())
+                    }
+                } else {
+                    Modifier.fillMaxSize()
                 }
-            } else {
-                Modifier.fillMaxSize()
+                val requiredPx = if (content != null) {
+                    bucketSize(max(content.width, content.height) * scale)
+                } else {
+                    2048
+                }
+                PageImage(
+                    vm = vm,
+                    index = baseIndex,
+                    requiredPx = requiredPx,
+                    contentScale = if (content != null) ContentScale.FillBounds else fit.toContentScale(),
+                    colorFilter = colorFilter,
+                    onAspect = { if (aspect != it) aspect = it },
+                    modifier = sizeModifier.graphicsLayer(
+                        translationX = offset.x,
+                        translationY = offset.y,
+                    ),
+                )
             }
-            val requiredPx = if (content != null) {
-                bucketSize(max(content.width, content.height) * scale)
-            } else {
-                2048
-            }
-            PageImage(
-                vm = vm,
-                index = baseIndex,
-                requiredPx = requiredPx,
-                contentScale = if (content != null) ContentScale.FillBounds else fit.toContentScale(),
-                colorFilter = colorFilter,
-                onAspect = { if (aspect != it) aspect = it },
-                modifier = sizeModifier.graphicsLayer(
-                    translationX = offset.x,
-                    translationY = offset.y,
-                ),
-            )
         } else {
             Row(
                 modifier = Modifier
@@ -544,6 +599,57 @@ private fun PageImage(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+    }
+}
+
+@Composable
+private fun RegionImage(
+    vm: ReaderViewModel,
+    index: Int,
+    content: Size?,
+    box: IntSize,
+    scale: Float,
+    offset: Offset,
+    colorFilter: ColorFilter?,
+    onAspect: (Float) -> Unit,
+) {
+    val src by produceState<IntSize?>(initialValue = null, index) { value = vm.pageSize(index) }
+    val srcSize = src
+    LaunchedEffect(srcSize) {
+        if (srcSize != null && srcSize.height > 0) onAspect(srcSize.width.toFloat() / srcSize.height)
+    }
+    if (srcSize == null || content == null || box.width == 0 || box.height == 0) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator(color = Color.White) }
+        return
+    }
+
+    val srcRect = remember(srcSize, content, box, scale, offset) {
+        visibleSourceRect(content, box, scale, offset, srcSize)
+    }
+    val sample = remember(srcRect) { regionSample(srcRect) }
+    val region by produceState<ImageBitmap?>(initialValue = null, index, srcRect, sample) {
+        value = vm.pageRegion(index, srcRect, sample)
+    }
+
+    Canvas(Modifier.fillMaxSize()) {
+        val image = region ?: return@Canvas
+        val contentW = content.width * scale
+        val contentH = content.height * scale
+        val left = box.width / 2f - contentW / 2f + offset.x
+        val top = box.height / 2f - contentH / 2f + offset.y
+        val kx = contentW / srcSize.width.toFloat()
+        val ky = contentH / srcSize.height.toFloat()
+        val dstLeft = left + srcRect.left * kx
+        val dstTop = top + srcRect.top * ky
+        val dstW = srcRect.width() * kx
+        val dstH = srcRect.height() * ky
+        drawImage(
+            image = image,
+            dstOffset = IntOffset(dstLeft.roundToInt(), dstTop.roundToInt()),
+            dstSize = IntSize(dstW.roundToInt().coerceAtLeast(1), dstH.roundToInt().coerceAtLeast(1)),
+            colorFilter = colorFilter,
+            filterQuality = FilterQuality.High,
+        )
     }
 }
 

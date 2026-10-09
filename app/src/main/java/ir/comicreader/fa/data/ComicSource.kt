@@ -14,6 +14,12 @@ interface ComicSource {
     /** Renders/decodes page [index]; the long edge should be about [maxDim]. */
     suspend fun pageBitmap(index: Int, maxDim: Int): Bitmap?
 
+    /** Raw encoded bytes of a page, when the source can provide them (for region decode). */
+    suspend fun pageBytes(index: Int): ByteArray? = null
+
+    /** Whether region/tile decoding is available for this source. */
+    val supportsRegion: Boolean get() = false
+
     fun close()
 }
 

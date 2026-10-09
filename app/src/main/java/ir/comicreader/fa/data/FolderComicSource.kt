@@ -27,5 +27,11 @@ class FolderComicSource(
         decodeImageBytes(bytes, maxDim)
     }
 
+    override val supportsRegion: Boolean = true
+
+    override suspend fun pageBytes(index: Int): ByteArray? = withContext(Dispatchers.IO) {
+        context.contentResolver.openInputStream(pages[index])?.use { it.readBytes() }
+    }
+
     override fun close() = Unit
 }
