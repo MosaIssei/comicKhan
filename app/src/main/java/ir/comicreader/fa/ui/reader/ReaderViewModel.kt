@@ -27,9 +27,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
-    private val cache = LruCache<String, ImageBitmap>(2)
+    private val cache = LruCache<String, ImageBitmap>(8)
     private val regionCache = LruCache<String, ImageBitmap>(6)
     private val bytesCache = LruCache<Int, ByteArray>(2)
+    private val loading = java.util.Collections.synchronizedSet(HashSet<String>())
+    private var session = 0
+
+    /** Bumped whenever a page finishes decoding, so the UI can pick it up. */
+    var revision by mutableIntStateOf(0)
+        private set
+
     private val decoderLock = Mutex()
     private val decoderCache = object : LruCache<Int, BitmapRegionDecoder>(1) {
         override fun entryRemoved(evicted: Boolean, key: Int, oldValue: BitmapRegionDecoder, newValue: BitmapRegionDecoder?) {
@@ -48,7 +55,6 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var error by mutableStateOf<String?>(null)
         private set
-
     var autoCrop by mutableStateOf(false)
         private set
 
@@ -58,8 +64,76 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             cache.evictAll()
             regionCache.evictAll()
             decoderCache.evictAll()
+            revision++
         }
     }
+
+    fun open(item: ComicItem) {
+        close()
+        session++
+        viewModelScope.launch {
+            // Opening (copying archives, parsing MHTML) can be heavy: do it off the main
+            // thread, including the first page-count read which may trigger a lazy parse.
+            val opened = withContext(Dispatchers.IO) {
+                runCatching {
+                    val src = ComicSourceFactory.open(getApplication(), item)
+                    src to src.pageCount
+                }
+            }
+            opened.onSuccess { (src, count) ->
+                source = src
+                title = item.name
+                uri = item.uri.toString()
+                pageCount = count
+                error = if (count == 0) "صفحه‌ای یافت نشد" else null
+                prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
+                prefs.setTotalPages(item.uri.toString(), count)
+            }.onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
+        }
+    }
+
+    // ---- page bitmaps ----------------------------------------------------------
+
+    private fun pageKey(index: Int, requiredPx: Int, minWidthPx: Int, crop: Boolean) =
+        index.toString() + "@" + requiredPx + "#" + minWidthPx + "#" + (if (crop) 1 else 0)
+
+    fun cachedPage(index: Int, requiredPx: Int, minWidthPx: Int): ImageBitmap? =
+        cache.get(pageKey(index, requiredPx, minWidthPx, autoCrop))
+
+    /**
+     * Starts decoding a page in the ViewModel scope (so it is not cancelled when a list item
+     * scrolls out of composition). The result shows up via [revision] + [cachedPage].
+     */
+    fun requestPage(index: Int, requiredPx: Int, minWidthPx: Int) {
+        val crop = autoCrop
+        val key = pageKey(index, requiredPx, minWidthPx, crop)
+        if (cache.get(key) != null || !loading.add(key)) return
+        val token = session
+        viewModelScope.launch {
+            val bitmap = decodePage(index, requiredPx, minWidthPx, crop)
+            loading.remove(key)
+            if (token == session && bitmap != null) {
+                cache.put(key, bitmap)
+                revision++
+            }
+        }
+    }
+
+    private suspend fun decodePage(index: Int, requiredPx: Int, minWidthPx: Int, crop: Boolean): ImageBitmap? =
+        withContext(Dispatchers.IO) {
+            val target = requiredPx.coerceIn(512, MAX_DIM)
+            val src = source ?: return@withContext null
+            val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
+                ?: return@withContext null
+            val ready = if (crop) {
+                runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
+            } else {
+                bitmap
+            }
+            ready.asImageBitmap()
+        }
+
+    // ---- region (tile) decoding ------------------------------------------------
 
     /** Intrinsic size of a page, for region math. Never throws. */
     suspend fun pageSize(index: Int): IntSize? = withContext(Dispatchers.IO) {
@@ -92,58 +166,15 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return bytes
     }
 
-    fun open(item: ComicItem) {
-        close()
-        viewModelScope.launch {
-            // Opening (copying archives, parsing MHTML) can be heavy: do it off the main
-            // thread, including the first page-count read which may trigger a lazy parse.
-            val opened = withContext(Dispatchers.IO) {
-                runCatching {
-                    val src = ComicSourceFactory.open(getApplication(), item)
-                    src to src.pageCount
-                }
-            }
-            opened.onSuccess { (src, count) ->
-                source = src
-                title = item.name
-                uri = item.uri.toString()
-                pageCount = count
-                error = if (count == 0) "صفحه‌ای یافت نشد" else null
-                prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
-                prefs.setTotalPages(item.uri.toString(), count)
-            }.onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
-        }
-    }
-
-    /**
-     * Decodes a page sized for what is actually on screen: [requiredPx] is the wanted
-     * length of the long edge (already bucketed). Decoding to the display size keeps
-     * zoomed-in pages sharp (up to the source resolution) instead of a fixed cap.
-     */
-    suspend fun loadPage(index: Int, requiredPx: Int, minWidthPx: Int = 0): ImageBitmap? = withContext(Dispatchers.IO) {
-        val target = requiredPx.coerceIn(512, MAX_DIM)
-        val key = index.toString() + "@" + target + "#" + minWidthPx
-        cache.get(key)?.let { return@withContext it }
-        val src = source ?: return@withContext null
-        val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
-            ?: return@withContext null
-        val ready = if (autoCrop) {
-            runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
-        } else {
-            bitmap
-        }
-        val image = ready.asImageBitmap()
-        cache.put(key, image)
-        image
-    }
-
     fun close() {
+        session++
         source?.close()
         source = null
         cache.evictAll()
         regionCache.evictAll()
         bytesCache.evictAll()
         decoderCache.evictAll()
+        loading.clear()
     }
 
     override fun onCleared() {

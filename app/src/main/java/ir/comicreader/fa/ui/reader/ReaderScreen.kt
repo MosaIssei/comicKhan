@@ -288,19 +288,14 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 val density = LocalDensity.current
                 val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
                 val horizontal = rememberScrollState()
-                var pendingDx by remember { mutableStateOf(0f) }
-                var pendingDy by remember { mutableStateOf(0f) }
+                var pendingScrollX by remember { mutableStateOf<Float?>(null) }
 
                 // Applied after the new (zoomed) layout exists, so the point under the fingers
                 // stays put instead of jumping.
                 LaunchedEffect(webtoonZoom) {
-                    if (pendingDx != 0f) {
-                        horizontal.dispatchRawDelta(pendingDx)
-                        pendingDx = 0f
-                    }
-                    if (pendingDy != 0f) {
-                        listState.dispatchRawDelta(pendingDy)
-                        pendingDy = 0f
+                    pendingScrollX?.let { target ->
+                        pendingScrollX = null
+                        horizontal.scrollTo(target.coerceIn(0f, horizontal.maxValue))
                     }
                 }
 
@@ -320,8 +315,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                                         val factor = newZoom / webtoonZoom
                                         if (factor != 1f) {
                                             val centroid = event.calculateCentroid()
-                                            pendingDx = (horizontal.value + centroid.x) * (factor - 1f)
-                                            pendingDy = centroid.y * (factor - 1f)
+                                            // Keep the horizontal point under the fingers fixed.
+                                            pendingScrollX = (horizontal.value + centroid.x) * factor - centroid.x
                                             webtoonZoom = newZoom
                                         }
                                         event.changes.forEach { if (it.positionChanged()) it.consume() }
@@ -667,10 +662,13 @@ private fun PageImage(
     onAspect: (Float) -> Unit,
     modifier: Modifier,
 ) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, index, requiredPx) {
-        value = vm.loadPage(index, requiredPx)
+    LaunchedEffect(index, requiredPx, vm.autoCrop) {
+        vm.requestPage(index, requiredPx, 0)
     }
-    val image = bitmap
+    val revision = vm.revision
+    val image = remember(revision, index, requiredPx, vm.autoCrop) {
+        vm.cachedPage(index, requiredPx, 0)
+    }
     LaunchedEffect(image) {
         if (image != null && image.height > 0) onAspect(image.width.toFloat() / image.height)
     }
@@ -775,10 +773,13 @@ private fun ContinuousPage(
     val configuration = LocalConfiguration.current
     val widthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
     val size by produceState<IntSize?>(initialValue = null, index) { value = vm.pageSize(index) }
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, index, widthPx) {
-        value = vm.loadPage(index, ReaderViewModel.MAX_DIM, widthPx)
+    LaunchedEffect(index, widthPx, vm.autoCrop) {
+        vm.requestPage(index, ReaderViewModel.MAX_DIM, widthPx)
     }
-    val image = bitmap
+    val revision = vm.revision
+    val image = remember(revision, index, widthPx, vm.autoCrop) {
+        vm.cachedPage(index, ReaderViewModel.MAX_DIM, widthPx)
+    }
     val ratio = image?.let { it.width.toFloat() / it.height }
         ?: size?.takeIf { it.height > 0 }?.let { it.width.toFloat() / it.height }
         ?: 0.75f
