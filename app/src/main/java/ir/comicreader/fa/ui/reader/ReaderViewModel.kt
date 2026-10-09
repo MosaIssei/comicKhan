@@ -59,17 +59,19 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Intrinsic size of a page, for region math. */
+    /** Intrinsic size of a page, for region math. Never throws. */
     suspend fun pageSize(index: Int): IntSize? = withContext(Dispatchers.IO) {
-        val bytes = pageBytes(index) ?: return@withContext null
-        RegionDecode.size(bytes)?.let { IntSize(it.width, it.height) }
+        runCatching {
+            val bytes = pageBytes(index) ?: return@runCatching null
+            RegionDecode.size(bytes)?.let { IntSize(it.width, it.height) }
+        }.getOrNull()
     }
 
     /** Decodes just [rect] of a page at native resolution (downsampled by [sample]). */
     suspend fun pageRegion(index: Int, rect: Rect, sample: Int): ImageBitmap? = withContext(Dispatchers.IO) {
         val key = index.toString() + ":" + rect.left + "," + rect.top + "," + rect.right + "," + rect.bottom + ":" + sample
         regionCache.get(key)?.let { return@withContext it }
-        val bytes = pageBytes(index) ?: return@withContext null
+        val bytes = runCatching { pageBytes(index) }.getOrNull() ?: return@withContext null
         val bitmap = decoderLock.withLock {
             val decoder = decoderCache.get(index)
                 ?: RegionDecode.newDecoder(bytes)?.also { decoderCache.put(index, it) }
@@ -83,7 +85,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun pageBytes(index: Int): ByteArray? {
         bytesCache.get(index)?.let { return it }
-        val bytes = source?.pageBytes(index) ?: return null
+        val bytes = runCatching { source?.pageBytes(index) }.getOrNull() ?: return null
         bytesCache.put(index, bytes)
         return bytes
     }

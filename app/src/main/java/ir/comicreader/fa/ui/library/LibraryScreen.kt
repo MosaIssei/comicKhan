@@ -121,13 +121,14 @@ fun LibraryScreen(vm: LibraryViewModel, onOpen: (ComicItem) -> Unit) {
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            Saf.takePermission(context, uri)
-            val info = Saf.queryFileInfo(context.contentResolver, uri)
-            val name = info?.first ?: "comic"
-            val size = info?.second ?: 0L
-            val kind = kindForName(name)
-            if (kind != null) {
-                onOpen(ComicItem(name, uri, kind, size))
+            val item = runCatching {
+                Saf.takePermission(context, uri)
+                val info = Saf.queryFileInfo(context.contentResolver, uri) ?: return@runCatching null
+                val kind = kindForName(info.first) ?: return@runCatching null
+                ComicItem(info.first, uri, kind, info.second)
+            }.getOrNull()
+            if (item != null) {
+                onOpen(item)
             } else {
                 Toast.makeText(context, R.string.unsupported_file, Toast.LENGTH_SHORT).show()
             }

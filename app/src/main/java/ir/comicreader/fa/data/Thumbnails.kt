@@ -17,6 +17,8 @@ import java.util.zip.ZipInputStream
  *
  * Only folder and ZIP/CBZ sources are read (a single pass, no full copy). RAR/PDF
  * covers are skipped to avoid copying large archives just for a thumbnail.
+ *
+ * Every failure is swallowed: a stored recent whose permission expired must never crash.
  */
 object Thumbnails {
 
@@ -28,13 +30,15 @@ object Thumbnails {
         val key = item.uri.toString()
         cache.get(key)?.let { return it }
 
-        val bitmap = withContext(Dispatchers.IO) {
-            when (item.kind) {
-                ComicKind.FOLDER -> fromFolder(context, item, maxDim)
-                ComicKind.ZIP -> fromZip(context, item, maxDim)
-                else -> null
+        val bitmap = runCatching {
+            withContext(Dispatchers.IO) {
+                when (item.kind) {
+                    ComicKind.FOLDER -> fromFolder(context, item, maxDim)
+                    ComicKind.ZIP -> fromZip(context, item, maxDim)
+                    else -> null
+                }
             }
-        } ?: return null
+        }.getOrNull() ?: return null
 
         return bitmap.asImageBitmap().also { cache.put(key, it) }
     }

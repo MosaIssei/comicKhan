@@ -21,11 +21,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import ir.comicreader.fa.data.Saf
 import ir.comicreader.fa.data.kindForName
 import ir.comicreader.fa.data.model.ComicItem
+import ir.comicreader.fa.ui.CrashScreen
 import ir.comicreader.fa.ui.library.LibraryScreen
 import ir.comicreader.fa.ui.library.LibraryViewModel
 import ir.comicreader.fa.ui.reader.ReaderScreen
 import ir.comicreader.fa.ui.reader.ReaderViewModel
 import ir.comicreader.fa.ui.theme.ComicReaderTheme
+import ir.comicreader.fa.util.CrashLog
 
 class MainActivity : ComponentActivity() {
 
@@ -41,6 +43,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         enableEdgeToEdge()
 
         deliver(intent?.data)
@@ -49,8 +52,17 @@ class MainActivity : ComponentActivity() {
         intent?.setData(null)
 
         setContent {
+            var crash by remember { mutableStateOf(CrashLog.read(this@MainActivity)) }
             ComicReaderTheme {
-                AppRoot(incomingUri = incomingUri.value, incomingToken = incomingToken.value)
+                val text = crash
+                if (text != null) {
+                    CrashScreen(text) {
+                        CrashLog.clear(this@MainActivity)
+                        crash = null
+                    }
+                } else {
+                    AppRoot(incomingUri = incomingUri.value, incomingToken = incomingToken.value)
+                }
             }
         }
     }
