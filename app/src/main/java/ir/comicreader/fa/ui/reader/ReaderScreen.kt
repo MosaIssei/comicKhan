@@ -295,7 +295,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 LaunchedEffect(webtoonZoom) {
                     pendingScrollX?.let { target ->
                         pendingScrollX = null
-                        horizontal.scrollTo(target.coerceIn(0f, horizontal.maxValue))
+                        horizontal.scrollTo(target.coerceIn(0f, horizontal.maxValue.toFloat()))
                     }
                 }
 
