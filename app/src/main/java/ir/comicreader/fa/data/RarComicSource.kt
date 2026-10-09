@@ -14,8 +14,8 @@ import java.io.File
 /**
  * Reads pages from a RAR/CBR archive using junrar (RAR 1.5–4.x).
  *
- * Note: RAR5 archives are not supported by junrar; such a file will fail to open
- * and surface as an error in the reader.
+ * RAR5 archives are detected up front and rejected with a clear message, since
+ * junrar cannot read them.
  */
 class RarComicSource(
     context: Context,
@@ -24,7 +24,10 @@ class RarComicSource(
 
     private val lock = Mutex()
     private val localFile: File = Cache.copyToCache(context, item.uri, "rar")
-    private val archive: Archive = Archive(localFile)
+    private val archive: Archive = run {
+        rejectRar5(localFile)
+        Archive(localFile)
+    }
 
     private val headers: List<FileHeader> = archive.fileHeaders
         .filter { !it.isDirectory && isImageName(it.fileName ?: "") }
@@ -42,5 +45,19 @@ class RarComicSource(
     override fun close() {
         runCatching { archive.close() }
         runCatching { localFile.delete() }
+    }
+
+    private fun rejectRar5(file: File) {
+        val header = ByteArray(7)
+        val read = file.inputStream().use { it.read(header) }
+        val isRar5 = read >= 7 &&
+            header[0] == 'R'.code.toByte() && header[1] == 'a'.code.toByte() &&
+            header[2] == 'r'.code.toByte() && header[3] == '!'.code.toByte() &&
+            header[4] == 0x1A.toByte() && header[5] == 0x07.toByte() && header[6] == 0x01.toByte()
+        if (isRar5) {
+            throw IllegalStateException(
+                "این فایل RAR5 است و پشتیبانی نمی‌شود؛ لطفاً با 7-Zip آن را به ZIP/CBZ تبدیل کنید"
+            )
+        }
     }
 }

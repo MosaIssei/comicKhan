@@ -22,6 +22,8 @@ object Thumbnails {
 
     private val cache = LruCache<String, ImageBitmap>(80)
 
+    fun clear() = cache.evictAll()
+
     suspend fun load(context: Context, item: ComicItem, maxDim: Int = 320): ImageBitmap? {
         val key = item.uri.toString()
         cache.get(key)?.let { return it }

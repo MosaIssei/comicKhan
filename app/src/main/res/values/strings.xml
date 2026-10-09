@@ -8,6 +8,10 @@
     <string name="refresh">بازخوانی</string>
     <string name="open_file">باز کردن فایل</string>
     <string name="unsupported_file">این نوع فایل پشتیبانی نمی‌شود</string>
+    <string name="search">جست‌وجو</string>
+    <string name="search_hint">جست‌وجوی نام کمیک…</string>
+    <string name="no_results">نتیجه‌ای پیدا نشد</string>
+    <string name="recent_continue">ادامهٔ مطالعه</string>
 
     <string name="empty_library">چیزی پیدا نشد</string>
     <string name="empty_library_hint">در پوشهٔ انتخابی هیچ فایل CBZ/ZIP یا پوشهٔ تصویری نبود.</string>
@@ -21,9 +25,34 @@
 
     <string name="reader_back">بازگشت</string>
     <string name="page_of">صفحهٔ %1$d از %2$d</string>
+    <string name="page_short">صفحهٔ %1$d</string>
     <string name="direction">جهت خواندن</string>
     <string name="dir_rtl">راست‌به‌چپ (مانگا)</string>
     <string name="dir_ltr">چپ‌به‌راست</string>
+    <string name="reader_settings">تنظیمات</string>
+    <string name="fit_mode">حالت تناسب صفحه</string>
+    <string name="fit_screen">کل صفحه</string>
+    <string name="fit_width">عرض صفحه</string>
+    <string name="fit_height">ارتفاع صفحه</string>
+    <string name="brightness">روشنایی</string>
+    <string name="contrast">کنتراست</string>
+    <string name="auto_crop">برش خودکار حاشیه</string>
+    <string name="orientation">چرخش صفحه</string>
+    <string name="orient_auto">خودکار</string>
+    <string name="orient_portrait">عمودی</string>
+    <string name="orient_landscape">افقی</string>
+    <string name="two_page">نمایش دو صفحه‌ای</string>
+    <string name="add_bookmark">بوکمارک این صفحه</string>
+    <string name="remove_bookmark">حذف بوکمارک</string>
+    <string name="bookmarks">بوکمارک‌ها</string>
+    <string name="continue_from">ادامه از صفحهٔ %1$d</string>
+    <string name="more">بیشتر</string>
+    <string name="sort">مرتب‌سازی</string>
+    <string name="sort_name_asc">نام (الف ← ی)</string>
+    <string name="sort_name_desc">نام (ی ← الف)</string>
+    <string name="sort_recent">آخرین مطالعه</string>
+    <string name="clear_cache">پاک‌کردن حافظهٔ موقت</string>
+    <string name="cache_cleared">حافظهٔ موقت پاک شد</string>
     <string name="reset_zoom">بازنشانی بزرگ‌نمایی</string>
 
     <string name="loading">در حال بارگذاری…</string>

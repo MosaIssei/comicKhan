@@ -17,15 +17,28 @@ import kotlinx.coroutines.withContext
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
+    private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
     private val cache = LruCache<Int, ImageBitmap>(6)
 
     var title by mutableStateOf("")
         private set
+    var uri by mutableStateOf("")
+        private set
     var pageCount by mutableIntStateOf(0)
         private set
     var error by mutableStateOf<String?>(null)
         private set
+
+    var autoCrop by mutableStateOf(false)
+        private set
+
+    fun setAutoCrop(enabled: Boolean) {
+        if (autoCrop != enabled) {
+            autoCrop = enabled
+            cache.evictAll()
+        }
+    }
 
     fun open(item: ComicItem) {
         close()
@@ -33,8 +46,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             .onSuccess { src ->
                 source = src
                 title = item.name
+                uri = item.uri.toString()
                 pageCount = src.pageCount
                 error = if (src.pageCount == 0) "صفحه‌ای یافت نشد" else null
+                prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
+                prefs.recordOpened(item)
             }
             .onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
     }
@@ -44,7 +60,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val src = source ?: return@withContext null
         val bitmap = runCatching { src.pageBitmap(index, MAX_DIM) }.getOrNull()
             ?: return@withContext null
-        val image = bitmap.asImageBitmap()
+        val ready = if (autoCrop) {
+            runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
+        } else {
+            bitmap
+        }
+        val image = ready.asImageBitmap()
         cache.put(index, image)
         image
     }
