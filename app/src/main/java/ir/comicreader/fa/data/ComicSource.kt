@@ -12,7 +12,7 @@ interface ComicSource {
     val pageCount: Int get() = pageNames.size
 
     /** Renders/decodes page [index]; the long edge should be about [maxDim]. */
-    suspend fun pageBitmap(index: Int, maxDim: Int): Bitmap?
+    suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int = 0): Bitmap?
 
     /** Raw encoded bytes of a page, when the source can provide them (for region decode). */
     suspend fun pageBytes(index: Int): ByteArray? = null

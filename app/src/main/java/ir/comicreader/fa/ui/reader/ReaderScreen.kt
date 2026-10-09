@@ -83,6 +83,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -660,8 +661,11 @@ private fun ContinuousPage(
     colorFilter: ColorFilter?,
     onTap: () -> Unit,
 ) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, index) {
-        value = vm.loadPage(index, 2560)
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val widthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, index, widthPx) {
+        value = vm.loadPage(index, ReaderViewModel.MAX_DIM, widthPx)
     }
     val image = bitmap
     Box(

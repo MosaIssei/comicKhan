@@ -35,10 +35,10 @@ class RarComicSource(
 
     override val pageNames: List<String> = headers.map { it.fileName ?: "" }
 
-    override suspend fun pageBitmap(index: Int, maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
+    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
         lock.withLock {
             val bytes = archive.getInputStream(headers[index]).use { it.readBytes() }
-            decodeImageBytes(bytes, maxDim)
+            decodeImageBytes(bytes, maxDim, minWidthPx)
         }
     }
 

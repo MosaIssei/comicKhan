@@ -21,10 +21,10 @@ class FolderComicSource(
 
     override val pageNames: List<String> = pages.map { it.lastPathSegment ?: "" }
 
-    override suspend fun pageBitmap(index: Int, maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
+    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
         val bytes = context.contentResolver.openInputStream(pages[index])?.use { it.readBytes() }
             ?: return@withContext null
-        decodeImageBytes(bytes, maxDim)
+        decodeImageBytes(bytes, maxDim, minWidthPx)
     }
 
     override val supportsRegion: Boolean = true

@@ -27,7 +27,7 @@ class PdfComicSource(
 
     override val pageNames: List<String> = List(renderer.pageCount) { "صفحهٔ ${it + 1}" }
 
-    override suspend fun pageBitmap(index: Int, maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
+    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
         lock.withLock {
             val page = renderer.openPage(index)
             try {

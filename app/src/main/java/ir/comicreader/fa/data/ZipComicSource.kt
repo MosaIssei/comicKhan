@@ -26,11 +26,11 @@ class ZipComicSource(
         .sortedWith(Ordering.Natural)
         .toList()
 
-    override suspend fun pageBitmap(index: Int, maxDim: Int): Bitmap? = withContext(Dispatchers.IO) {
+    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
         lock.withLock {
             val entry = zip.getEntry(pageNames[index]) ?: return@withLock null
             val bytes = zip.getInputStream(entry).use { it.readBytes() }
-            decodeImageBytes(bytes, maxDim)
+            decodeImageBytes(bytes, maxDim, minWidthPx)
         }
     }
 

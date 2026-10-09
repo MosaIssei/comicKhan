@@ -94,12 +94,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
      * length of the long edge (already bucketed). Decoding to the display size keeps
      * zoomed-in pages sharp (up to the source resolution) instead of a fixed cap.
      */
-    suspend fun loadPage(index: Int, requiredPx: Int): ImageBitmap? = withContext(Dispatchers.IO) {
+    suspend fun loadPage(index: Int, requiredPx: Int, minWidthPx: Int = 0): ImageBitmap? = withContext(Dispatchers.IO) {
         val target = requiredPx.coerceIn(512, MAX_DIM)
-        val key = index.toString() + "@" + target
+        val key = index.toString() + "@" + target + "#" + minWidthPx
         cache.get(key)?.let { return@withContext it }
         val src = source ?: return@withContext null
-        val bitmap = runCatching { src.pageBitmap(index, target) }.getOrNull()
+        val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
             ?: return@withContext null
         val ready = if (autoCrop) {
             runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
