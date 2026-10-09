@@ -37,6 +37,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     var revision by mutableIntStateOf(0)
         private set
 
+    /** Bumped on every successful open, so the UI re-requests pages after a reopen. */
+    var generation by mutableIntStateOf(0)
+        private set
+
     private val decoderLock = Mutex()
     private val decoderCache = object : LruCache<Int, BitmapRegionDecoder>(1) {
         override fun entryRemoved(evicted: Boolean, key: Int, oldValue: BitmapRegionDecoder, newValue: BitmapRegionDecoder?) {
@@ -88,6 +92,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 error = if (count == 0) "صفحه‌ای یافت نشد" else null
                 prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
                 prefs.setTotalPages(item.uri.toString(), count)
+                generation++
             }.onFailure { e -> error = e.message ?: "خطا در باز کردن فایل" }
         }
     }
@@ -170,6 +175,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         session++
         source?.close()
         source = null
+        // Reset published state so a re-open composes only once the new source is ready
+        // (otherwise the UI would request pages against a closed source and get stuck).
+        title = ""
+        uri = ""
+        pageCount = 0
+        error = null
         cache.evictAll()
         regionCache.evictAll()
         bytesCache.evictAll()

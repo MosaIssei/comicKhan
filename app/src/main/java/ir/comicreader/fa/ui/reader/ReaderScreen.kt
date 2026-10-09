@@ -83,6 +83,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
@@ -288,11 +289,14 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                 val density = LocalDensity.current
                 val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
                 val horizontal = rememberScrollState()
+                var boxSize by remember { mutableStateOf(IntSize.Zero) }
+                var gestureZoom by remember { mutableFloatStateOf(1f) }
+                var focal by remember { mutableStateOf(Offset.Zero) }
                 var pendingScrollX by remember { mutableStateOf<Int?>(null) }
                 var pendingVFactor by remember { mutableStateOf<Float?>(null) }
                 var pendingVY by remember { mutableStateOf(0f) }
 
-                // Applied after the new (zoomed) layout exists, so the point under the fingers
+                // Applied once the new (zoomed) layout exists, so the point under the fingers
                 // stays put instead of jumping. (ScrollState works in integer pixels.)
                 LaunchedEffect(webtoonZoom) {
                     pendingScrollX?.let { target ->
@@ -301,34 +305,48 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     }
                     pendingVFactor?.let { factor ->
                         pendingVFactor = null
-                        val anchorDistance = pendingVY + listState.firstVisibleItemScrollOffset
-                        listState.dispatchRawDelta((factor - 1f) * anchorDistance)
+                        if (factor != 1f) {
+                            val anchorDistance = pendingVY + listState.firstVisibleItemScrollOffset
+                            listState.dispatchRawDelta((factor - 1f) * anchorDistance)
+                        }
                     }
                 }
+
+                val contentWidthPx = with(density) { (baseWidth * webtoonZoom).toPx() }
 
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
+                        .onSizeChanged { boxSize = it }
                         .horizontalScroll(horizontal)
                         .pointerInput(Unit) {
-                            // Pinch (two fingers) zooms around the fingers; single-finger drags scroll.
+                            // Pinch (two fingers) scales visually (no reflow) for a smooth gesture;
+                            // the list reflows once on release. Single-finger drags scroll the list.
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false)
+                                var pinching = false
                                 while (true) {
                                     val event = awaitPointerEvent()
-                                    if (event.changes.none { it.pressed }) break
-                                    if (event.changes.size >= 2) {
-                                        val newZoom = (webtoonZoom * event.calculateZoom()).coerceIn(1f, 4f)
-                                        val factor = newZoom / webtoonZoom
-                                        if (factor != 1f) {
-                                            val centroid = event.calculateCentroid()
-                                            // Keep the point under the fingers fixed (horizontally and vertically).
-                                            pendingScrollX =
-                                                (((horizontal.value + centroid.x) * factor) - centroid.x).roundToInt()
-                                            pendingVFactor = factor
-                                            pendingVY = centroid.y
+                                    if (event.changes.none { it.pressed }) {
+                                        if (pinching) {
+                                            val newZoom = (webtoonZoom * gestureZoom).coerceIn(1f, 4f)
+                                            val factor = newZoom / webtoonZoom
+                                            if (factor != 1f) {
+                                                pendingScrollX =
+                                                    (((horizontal.value + focal.x) * factor) - focal.x).roundToInt()
+                                                pendingVFactor = factor
+                                                pendingVY = focal.y
+                                            }
+                                            gestureZoom = 1f
                                             webtoonZoom = newZoom
                                         }
+                                        break
+                                    }
+                                    if (event.changes.size >= 2) {
+                                        pinching = true
+                                        focal = event.calculateCentroid()
+                                        val total = (webtoonZoom * gestureZoom * event.calculateZoom()).coerceIn(1f, 4f)
+                                        gestureZoom = total / webtoonZoom
                                         event.changes.forEach { if (it.positionChanged()) it.consume() }
                                     }
                                 }
@@ -339,7 +357,19 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         state = listState,
                         modifier = Modifier
                             .width(baseWidth * webtoonZoom)
-                            .fillMaxHeight(),
+                            .fillMaxHeight()
+                            .graphicsLayer(
+                                scaleX = gestureZoom,
+                                scaleY = gestureZoom,
+                                transformOrigin = if (boxSize.width > 0 && contentWidthPx > 0f) {
+                                    TransformOrigin(
+                                        ((focal.x + horizontal.value) / contentWidthPx).coerceIn(0f, 1f),
+                                        (focal.y / boxSize.height).coerceIn(0f, 1f),
+                                    )
+                                } else {
+                                    TransformOrigin.Center
+                                },
+                            ),
                     ) {
                         items(count = pageCount, key = { it }) { index ->
                             ContinuousPage(
@@ -672,11 +702,11 @@ private fun PageImage(
     onAspect: (Float) -> Unit,
     modifier: Modifier,
 ) {
-    LaunchedEffect(index, requiredPx, vm.autoCrop) {
+    LaunchedEffect(index, requiredPx, vm.autoCrop, vm.generation) {
         vm.requestPage(index, requiredPx, 0)
     }
     val revision = vm.revision
-    val image = remember(revision, index, requiredPx, vm.autoCrop) {
+    val image = remember(revision, vm.generation, index, requiredPx, vm.autoCrop) {
         vm.cachedPage(index, requiredPx, 0)
     }
     LaunchedEffect(image) {
@@ -709,7 +739,7 @@ private fun RegionImage(
     colorFilter: ColorFilter?,
     onAspect: (Float) -> Unit,
 ) {
-    val src by produceState<IntSize?>(initialValue = null, index) { value = vm.pageSize(index) }
+    val src by produceState<IntSize?>(initialValue = null, index, vm.generation) { value = vm.pageSize(index) }
     val srcSize = src
     LaunchedEffect(srcSize) {
         if (srcSize != null && srcSize.height > 0) onAspect(srcSize.width.toFloat() / srcSize.height)
@@ -734,8 +764,8 @@ private fun RegionImage(
         (gy + cellH * 2).coerceAtMost(srcSize.height),
     )
 
-    var current by remember(index) { mutableStateOf<Pair<Rect, ImageBitmap>?>(null) }
-    LaunchedEffect(index, decodeRect) {
+    var current by remember(index, vm.generation) { mutableStateOf<Pair<Rect, ImageBitmap>?>(null) }
+    LaunchedEffect(index, decodeRect, vm.generation) {
         val bitmap = vm.pageRegion(index, decodeRect, regionSample(decodeRect))
         if (bitmap != null) current = decodeRect to bitmap
     }
@@ -783,11 +813,11 @@ private fun ContinuousPage(
     val configuration = LocalConfiguration.current
     val widthPx = with(density) { configuration.screenWidthDp.dp.roundToPx() }
     val size by produceState<IntSize?>(initialValue = null, index) { value = vm.pageSize(index) }
-    LaunchedEffect(index, widthPx, vm.autoCrop) {
+    LaunchedEffect(index, widthPx, vm.autoCrop, vm.generation) {
         vm.requestPage(index, ReaderViewModel.MAX_DIM, widthPx)
     }
     val revision = vm.revision
-    val image = remember(revision, index, widthPx, vm.autoCrop) {
+    val image = remember(revision, vm.generation, index, widthPx, vm.autoCrop) {
         vm.cachedPage(index, ReaderViewModel.MAX_DIM, widthPx)
     }
     val ratio = image?.let { it.width.toFloat() / it.height }
