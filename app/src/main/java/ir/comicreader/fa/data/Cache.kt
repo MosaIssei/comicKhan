@@ -18,4 +18,11 @@ internal object Cache {
         } ?: throw IllegalStateException("باز کردن فایل ممکن نشد")
         return target
     }
+
+    /** A unique temp file for extracting a nested archive from a container. */
+    fun newTempFile(context: Context, name: String): File {
+        val dir = File(context.cacheDir, "nested").apply { mkdirs() }
+        val safe = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(dir, safe + "_" + name.hashCode().toUInt().toString(16))
+    }
 }

@@ -12,47 +12,93 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Reads pages from a RAR/CBR archive using junrar (RAR 1.5–4.x).
+ * Reads pages from a RAR/CBR archive using junrar (RAR 1.5–4.x). RAR5 is rejected with a
+ * clear message.
  *
- * RAR5 archives are detected up front and rejected with a clear message, since
- * junrar cannot read them.
+ * Like [ZipComicSource], a RAR that contains other archives is treated as a container and
+ * their pages are shown in order.
  */
-class RarComicSource(
-    context: Context,
+class RarComicSource private constructor(
+    private val context: Context,
     override val item: ComicItem,
+    private val localFile: File,
+    private val ownsFile: Boolean,
+    allowNested: Boolean,
 ) : ComicSource {
 
+    constructor(context: Context, item: ComicItem) :
+        this(context, item, Cache.copyToCache(context, item.uri, "rar"), true, true)
+
+    internal constructor(context: Context, item: ComicItem, file: File) :
+        this(context, item, file, false, false)
+
     private val lock = Mutex()
-    private val localFile: File = Cache.copyToCache(context, item.uri, "rar")
     private val archive: Archive = run {
         rejectRar5(localFile)
         Archive(localFile)
     }
 
     private val headers: List<FileHeader> = archive.fileHeaders
-        .filter { !it.isDirectory && isImageName(it.fileName ?: "") }
+        .filter { !it.isDirectory }
         .sortedWith(Comparator { a, b -> Ordering.compare(a.fileName ?: "", b.fileName ?: "") })
 
-    override val pageNames: List<String> = headers.map { it.fileName ?: "" }
+    private val imageHeaders: List<FileHeader> = headers.filter { isImageName(it.fileName ?: "") }
 
-    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
-        lock.withLock {
-            val bytes = archive.getInputStream(headers[index]).use { it.readBytes() }
-            decodeImageBytes(bytes, maxDim, minWidthPx)
+    private val nested: NestedArchiveSource? =
+        if (allowNested && headers.any { isArchiveName(it.fileName ?: "") }) buildNested() else null
+
+    private fun buildNested(): NestedArchiveSource {
+        val children = ArrayList<ComicSource>()
+        val temps = ArrayList<File>()
+
+        for (header in headers) {
+            val name = header.fileName ?: continue
+            when {
+                isImageName(name) -> children += SinglePageSource(item, name) {
+                    archive.getInputStream(header).use { it.readBytes() }
+                }
+
+                isArchiveName(name) -> runCatching {
+                    val temp = Cache.newTempFile(context, name)
+                    archive.getInputStream(header).use { input ->
+                        temp.outputStream().use { input.copyTo(it) }
+                    }
+                    temps += temp
+                    val child = childSource(context, nestedItem(name, temp), temp)
+                    if (child.pageCount > 0) children += child
+                }
+            }
+        }
+        return NestedArchiveSource(item, children, temps)
+    }
+
+    override val pageNames: List<String> get() = nested?.pageNames ?: imageHeaders.map { it.fileName ?: "" }
+
+    override val supportsRegion: Boolean get() = nested?.supportsRegion ?: true
+
+    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? {
+        nested?.let { return it.pageBitmap(index, maxDim, minWidthPx) }
+        return withContext(Dispatchers.IO) {
+            lock.withLock {
+                val bytes = archive.getInputStream(imageHeaders[index]).use { it.readBytes() }
+                decodeImageBytes(bytes, maxDim, minWidthPx)
+            }
         }
     }
 
-    override val supportsRegion: Boolean = true
-
-    override suspend fun pageBytes(index: Int): ByteArray? = withContext(Dispatchers.IO) {
-        lock.withLock {
-            archive.getInputStream(headers[index]).use { it.readBytes() }
+    override suspend fun pageBytes(index: Int): ByteArray? {
+        nested?.let { return it.pageBytes(index) }
+        return withContext(Dispatchers.IO) {
+            lock.withLock {
+                archive.getInputStream(imageHeaders[index]).use { it.readBytes() }
+            }
         }
     }
 
     override fun close() {
+        nested?.close()
         runCatching { archive.close() }
-        runCatching { localFile.delete() }
+        if (ownsFile) runCatching { localFile.delete() }
     }
 
     private fun rejectRar5(file: File) {

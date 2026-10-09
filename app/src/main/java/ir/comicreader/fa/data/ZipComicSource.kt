@@ -10,41 +10,92 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.zip.ZipFile
 
-/** Reads pages from a ZIP/CBZ archive (copied to cache for random access). */
-class ZipComicSource(
-    context: Context,
+/**
+ * Reads pages from a ZIP/CBZ archive (copied to cache for random access).
+ *
+ * If the archive contains other archives (zip/cbz/rar/cbr) inside, it is treated as a
+ * container: the pages of those nested archives are shown in order, one after another.
+ */
+class ZipComicSource private constructor(
+    private val context: Context,
     override val item: ComicItem,
+    private val localFile: File,
+    private val ownsFile: Boolean,
+    allowNested: Boolean,
 ) : ComicSource {
 
+    constructor(context: Context, item: ComicItem) :
+        this(context, item, Cache.copyToCache(context, item.uri, "zip"), true, true)
+
+    internal constructor(context: Context, item: ComicItem, file: File) :
+        this(context, item, file, false, false)
+
     private val lock = Mutex()
-    private val localFile: File = Cache.copyToCache(context, item.uri, "zip")
     private val zip: ZipFile = ZipFile(localFile)
 
-    override val pageNames: List<String> = zip.entries().asSequence()
-        .filter { !it.isDirectory && isImageName(it.name) }
+    private val entries: List<String> = zip.entries().asSequence()
+        .filter { !it.isDirectory }
         .map { it.name }
         .sortedWith(Ordering.Natural)
         .toList()
 
-    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
-        lock.withLock {
-            val entry = zip.getEntry(pageNames[index]) ?: return@withLock null
-            val bytes = zip.getInputStream(entry).use { it.readBytes() }
-            decodeImageBytes(bytes, maxDim, minWidthPx)
+    private val imageEntries: List<String> = entries.filter { isImageName(it) }
+
+    private val nested: NestedArchiveSource? =
+        if (allowNested && entries.any { isArchiveName(it) }) buildNested() else null
+
+    private fun buildNested(): NestedArchiveSource {
+        val children = ArrayList<ComicSource>()
+        val temps = ArrayList<File>()
+
+        for (name in entries) {
+            when {
+                isImageName(name) -> children += SinglePageSource(item, name) {
+                    zip.getInputStream(zip.getEntry(name)).use { it.readBytes() }
+                }
+
+                isArchiveName(name) -> runCatching {
+                    val temp = Cache.newTempFile(context, name)
+                    zip.getInputStream(zip.getEntry(name)).use { input ->
+                        temp.outputStream().use { input.copyTo(it) }
+                    }
+                    temps += temp
+                    val child = childSource(context, nestedItem(name, temp), temp)
+                    if (child.pageCount > 0) children += child
+                }
+            }
+        }
+        return NestedArchiveSource(item, children, temps)
+    }
+
+    override val pageNames: List<String> get() = nested?.pageNames ?: imageEntries
+
+    override val supportsRegion: Boolean get() = nested?.supportsRegion ?: true
+
+    override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? {
+        nested?.let { return it.pageBitmap(index, maxDim, minWidthPx) }
+        return withContext(Dispatchers.IO) {
+            lock.withLock {
+                val entry = zip.getEntry(imageEntries[index]) ?: return@withLock null
+                val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                decodeImageBytes(bytes, maxDim, minWidthPx)
+            }
         }
     }
 
-    override val supportsRegion: Boolean = true
-
-    override suspend fun pageBytes(index: Int): ByteArray? = withContext(Dispatchers.IO) {
-        lock.withLock {
-            val entry = zip.getEntry(pageNames[index]) ?: return@withLock null
-            zip.getInputStream(entry).use { it.readBytes() }
+    override suspend fun pageBytes(index: Int): ByteArray? {
+        nested?.let { return it.pageBytes(index) }
+        return withContext(Dispatchers.IO) {
+            lock.withLock {
+                val entry = zip.getEntry(imageEntries[index]) ?: return@withLock null
+                zip.getInputStream(entry).use { it.readBytes() }
+            }
         }
     }
 
     override fun close() {
+        nested?.close()
         runCatching { zip.close() }
-        runCatching { localFile.delete() }
+        if (ownsFile) runCatching { localFile.delete() }
     }
 }
