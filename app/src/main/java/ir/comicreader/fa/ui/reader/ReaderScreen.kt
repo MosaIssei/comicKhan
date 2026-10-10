@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
@@ -44,10 +46,12 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
@@ -68,6 +72,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -208,6 +213,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     var contrast by remember { mutableStateOf(prefs.contrast.coerceIn(0.5f, 2f)) }
     var invert by remember { mutableStateOf(prefs.invertColors) }
     var autoCrop by remember { mutableStateOf(prefs.autoCrop) }
+    var cropPadH by remember { mutableIntStateOf(prefs.cropPadH) }
+    var cropPadV by remember { mutableIntStateOf(prefs.cropPadV) }
     var continuous by remember { mutableStateOf(prefs.continuous) }
     var webtoonZoom by remember { mutableStateOf(prefs.webtoonZoom.coerceIn(1f, 4f)) }
     var orientation by remember {
@@ -242,7 +249,9 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     // Webtoon item heights must be known before the list is built: every item is sized from
     // its pre-read aspect and never resized afterwards, so the list never re-anchors while
     // you scroll back up into pages whose bitmaps only load later.
-    var webtoonAspects by remember(vm.uri, vm.generation, autoCrop) { mutableStateOf<List<Float>?>(null) }
+    var webtoonAspects by remember(vm.uri, vm.generation, autoCrop, vm.cropPadH, vm.cropPadV) {
+        mutableStateOf<List<Float>?>(null)
+    }
 
     /** How far into the first visible page the list is scrolled, as a fraction (0..1). */
     fun currentPageFraction(): Float {
@@ -287,7 +296,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     LaunchedEffect(autoCrop) { vm.applyAutoCrop(autoCrop) }
     LaunchedEffect(webtoonZoom) { prefs.webtoonZoom = webtoonZoom }
 
-    LaunchedEffect(continuous, pageCount, vm.generation, autoCrop) {
+    LaunchedEffect(continuous, pageCount, vm.generation, autoCrop, vm.cropPadH, vm.cropPadV) {
         if (continuous && pageCount > 0) {
             if (webtoonAspects == null) {
                 webtoonAspects = withContext(Dispatchers.IO) {
@@ -545,6 +554,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onInvert = { invert = it; prefs.invertColors = it },
                     autoCrop = autoCrop,
                     onAutoCrop = { autoCrop = it; prefs.autoCrop = it },
+                    cropPadH = cropPadH,
+                    cropPadV = cropPadV,
+                    onCropPadH = { cropPadH = it },
+                    onCropPadV = { cropPadV = it },
+                    onCropPadCommit = { vm.applyCropPad(cropPadH, cropPadV) },
                     orientation = orientation,
                     onOrientation = { orientation = it; prefs.orientationOrdinal = it.ordinal },
                     twoPage = twoPage,
@@ -556,6 +570,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     bookmarks = bookmarks,
                     onJump = { page -> seekToPage(page) },
                     onJumpToPage = { jumpOpen = true },
+                    onClose = { settingsVisible = false },
                 )
             } else if (pageCount > 1) {
                 ReaderBottomBar(
@@ -1039,6 +1054,11 @@ private fun ReaderSettings(
     onInvert: (Boolean) -> Unit,
     autoCrop: Boolean,
     onAutoCrop: (Boolean) -> Unit,
+    cropPadH: Int,
+    cropPadV: Int,
+    onCropPadH: (Int) -> Unit,
+    onCropPadV: (Int) -> Unit,
+    onCropPadCommit: () -> Unit,
     orientation: OrientationMode,
     onOrientation: (OrientationMode) -> Unit,
     twoPage: Boolean,
@@ -1046,155 +1066,230 @@ private fun ReaderSettings(
     bookmarks: Set<Int>,
     onJump: (Int) -> Unit,
     onJumpToPage: () -> Unit,
+    onClose: () -> Unit,
 ) {
-    Surface(color = Color.Black.copy(alpha = 0.88f)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            OutlinedButton(onClick = onJumpToPage, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.jump_to_page))
-            }
+    // Bounded and scrollable: the panel has outgrown a screen, and a settings drawer that runs
+    // off the bottom edge leaves the last rows unreachable.
+    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.82f
 
-            if (bookmarks.isNotEmpty()) {
+    Surface(color = Color.Black.copy(alpha = 0.94f)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 4.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
-                    text = stringResource(R.string.bookmarks),
+                    text = stringResource(R.string.reader_settings),
                     color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    bookmarks.sorted().forEach { page ->
-                        OutlinedButton(onClick = { onJump(page) }) {
-                            Text(stringResource(R.string.page_short, page + 1))
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.close),
+                        tint = Color.White,
+                    )
+                }
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Color.White.copy(alpha = 0.18f)),
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = maxHeight)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+            ) {
+                SettingsGroup(stringResource(R.string.settings_group_page)) {
+                    SettingLabel(stringResource(R.string.view_mode))
+                    ChoiceRow(
+                        labels = listOf(
+                            stringResource(R.string.view_paged),
+                            stringResource(R.string.view_continuous),
+                        ),
+                        selected = if (continuous) 1 else 0,
+                        onSelect = { onContinuous(it == 1) },
+                    )
+
+                    SettingLabel(stringResource(R.string.direction))
+                    ChoiceRow(
+                        labels = listOf(stringResource(R.string.dir_rtl), stringResource(R.string.dir_ltr)),
+                        selected = if (rtl) 0 else 1,
+                        onSelect = { onRtl(it == 0) },
+                    )
+
+                    SettingLabel(stringResource(R.string.fit_mode))
+                    ChoiceRow(
+                        labels = listOf(
+                            stringResource(R.string.fit_screen),
+                            stringResource(R.string.fit_width),
+                            stringResource(R.string.fit_height),
+                        ),
+                        selected = fit.ordinal,
+                        onSelect = { onFit(FitMode.entries[it]) },
+                    )
+
+                    SettingLabel(stringResource(R.string.orientation))
+                    ChoiceRow(
+                        labels = listOf(
+                            stringResource(R.string.orient_auto),
+                            stringResource(R.string.orient_portrait),
+                            stringResource(R.string.orient_landscape),
+                        ),
+                        selected = orientation.ordinal,
+                        onSelect = { onOrientation(OrientationMode.entries[it]) },
+                    )
+
+                    SwitchRow(
+                        label = stringResource(R.string.two_page),
+                        checked = twoPage,
+                        onCheckedChange = onTwoPage,
+                    )
+                }
+
+                SettingsGroup(stringResource(R.string.settings_group_image)) {
+                    SliderSetting(
+                        label = stringResource(R.string.brightness),
+                        value = brightness,
+                        valueRange = 0.2f..1f,
+                        onValueChange = onBrightness,
+                    )
+                    SliderSetting(
+                        label = stringResource(R.string.contrast),
+                        value = contrast,
+                        valueRange = 0.5f..2f,
+                        onValueChange = onContrast,
+                    )
+                    SwitchRow(
+                        label = stringResource(R.string.invert_colors),
+                        checked = invert,
+                        onCheckedChange = onInvert,
+                    )
+                }
+
+                SettingsGroup(stringResource(R.string.settings_group_crop)) {
+                    SwitchRow(
+                        label = stringResource(R.string.auto_crop),
+                        checked = autoCrop,
+                        onCheckedChange = onAutoCrop,
+                    )
+                    if (autoCrop) {
+                        // Committed on release, not on every tick: each change re-decodes the
+                        // pages, and dragging a slider fires dozens of updates.
+                        SliderSetting(
+                            label = stringResource(R.string.crop_pad_h, cropPadH),
+                            value = cropPadH.toFloat(),
+                            valueRange = 0f..80f,
+                            onValueChange = { onCropPadH(it.roundToInt()) },
+                            onValueChangeFinished = onCropPadCommit,
+                        )
+                        SliderSetting(
+                            label = stringResource(R.string.crop_pad_v, cropPadV),
+                            value = cropPadV.toFloat(),
+                            valueRange = 0f..80f,
+                            onValueChange = { onCropPadV(it.roundToInt()) },
+                            onValueChangeFinished = onCropPadCommit,
+                        )
+                    }
+                }
+
+                SettingsGroup(stringResource(R.string.settings_group_nav)) {
+                    OutlinedButton(onClick = onJumpToPage, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.jump_to_page))
+                    }
+                    if (bookmarks.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            bookmarks.sorted().forEach { page ->
+                                OutlinedButton(onClick = { onJump(page) }) {
+                                    Text(stringResource(R.string.page_short, page + 1))
+                                }
+                            }
                         }
                     }
                 }
             }
-
-            Text(
-                text = stringResource(R.string.view_mode),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            ChoiceRow(
-                labels = listOf(
-                    stringResource(R.string.view_paged),
-                    stringResource(R.string.view_continuous),
-                ),
-                selected = if (continuous) 1 else 0,
-                onSelect = { onContinuous(it == 1) },
-            )
-
-            Text(
-                text = stringResource(R.string.direction),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            ChoiceRow(
-                labels = listOf(stringResource(R.string.dir_rtl), stringResource(R.string.dir_ltr)),
-                selected = if (rtl) 0 else 1,
-                onSelect = { onRtl(it == 0) },
-            )
-
-            Text(
-                text = stringResource(R.string.fit_mode),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            ChoiceRow(
-                labels = listOf(
-                    stringResource(R.string.fit_screen),
-                    stringResource(R.string.fit_width),
-                    stringResource(R.string.fit_height),
-                ),
-                selected = fit.ordinal,
-                onSelect = { onFit(FitMode.entries[it]) },
-            )
-
-            Text(
-                text = stringResource(R.string.orientation),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            ChoiceRow(
-                labels = listOf(
-                    stringResource(R.string.orient_auto),
-                    stringResource(R.string.orient_portrait),
-                    stringResource(R.string.orient_landscape),
-                ),
-                selected = orientation.ordinal,
-                onSelect = { onOrientation(OrientationMode.entries[it]) },
-            )
-
-            Text(
-                text = stringResource(R.string.brightness),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Slider(
-                value = brightness,
-                onValueChange = onBrightness,
-                valueRange = 0.2f..1f,
-            )
-
-            Text(
-                text = stringResource(R.string.contrast),
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Slider(
-                value = contrast,
-                onValueChange = onContrast,
-                valueRange = 0.5f..2f,
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.invert_colors),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(checked = invert, onCheckedChange = onInvert)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.auto_crop),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(checked = autoCrop, onCheckedChange = onAutoCrop)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.two_page),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(checked = twoPage, onCheckedChange = onTwoPage)
-            }
         }
+    }
+}
+
+/** A titled section: a heading with a hairline running to the right edge. */
+@Composable
+private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 14.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+            )
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun SettingLabel(text: String) {
+    Text(text = text, color = Color.White, style = MaterialTheme.typography.labelLarge)
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun SliderSetting(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: (() -> Unit)? = null,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        SettingLabel(label)
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            onValueChangeFinished = onValueChangeFinished,
+        )
     }
 }
 

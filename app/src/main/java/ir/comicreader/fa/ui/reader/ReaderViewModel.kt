@@ -79,6 +79,25 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** How much of a detected crop margin to keep, in percent (see [Prefs.cropPadH]). */
+    var cropPadH by mutableIntStateOf(prefs.cropPadH)
+        private set
+    var cropPadV by mutableIntStateOf(prefs.cropPadV)
+        private set
+
+    fun applyCropPad(horizontal: Int, vertical: Int) {
+        if (cropPadH != horizontal || cropPadV != vertical) {
+            cropPadH = horizontal
+            cropPadV = vertical
+            prefs.cropPadH = horizontal
+            prefs.cropPadV = vertical
+            cache.evictAll()
+            regionCache.evictAll()
+            decoderCache.evictAll()
+            revision++
+        }
+    }
+
     fun open(item: ComicItem) {
         close()
         session++
@@ -142,7 +161,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
                 ?: return@withContext null
             val ready = if (crop) {
-                runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
+                runCatching {
+                    ir.comicreader.fa.data.AutoCrop.crop(bitmap, cropPadH / 100f, cropPadV / 100f)
+                }.getOrDefault(bitmap)
             } else {
                 bitmap
             }
@@ -174,7 +195,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 // Only the box is needed here, never a cropped copy: the webtoon asks for an
                 // aspect of every page up front, so this has to stay cheap.
                 val bitmap = source?.pageBitmap(index, 400, 0) ?: return@runCatching null
-                val rect = runCatching { ir.comicreader.fa.data.AutoCrop.cropRect(bitmap) }.getOrNull()
+                val rect = runCatching {
+                    ir.comicreader.fa.data.AutoCrop.cropRect(bitmap, cropPadH / 100f, cropPadV / 100f)
+                }.getOrNull()
                 val shownW = rect?.width() ?: bitmap.width
                 val shownH = rect?.height() ?: bitmap.height
                 if (shownH > 0) shownW.toFloat() / shownH else null

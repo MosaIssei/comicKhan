@@ -38,6 +38,13 @@
     <string name="dir_rtl">راست‌به‌چپ (مانگا)</string>
     <string name="dir_ltr">چپ‌به‌راست</string>
     <string name="reader_settings">تنظیمات</string>
+    <string name="close">بستن</string>
+    <string name="settings_group_page">صفحه و نمایش</string>
+    <string name="settings_group_image">تصویر</string>
+    <string name="settings_group_crop">برش خودکار</string>
+    <string name="settings_group_nav">پیمایش</string>
+    <string name="crop_pad_h">نگه‌داشتن حاشیهٔ چپ و راست — %1$d٪</string>
+    <string name="crop_pad_v">نگه‌داشتن حاشیهٔ بالا و پایین — %1$d٪</string>
     <string name="view_mode">حالت نمایش</string>
     <string name="view_paged">صفحه‌به‌صفحه</string>
     <string name="view_continuous">پیوسته (وب‌تُون)</string>

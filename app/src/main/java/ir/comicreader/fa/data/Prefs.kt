@@ -52,6 +52,19 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_AUTOCROP, false)
         set(value) = sp.edit().putBoolean(KEY_AUTOCROP, value).apply()
 
+    /**
+     * How much of a detected auto-crop margin to keep, in percent, at the sides and at the top
+     * and bottom. Mirrors ComicScreen's `set_img_crop_auto_pad_h` / `pad_v`: 0 trims the whole
+     * margin, 80 keeps most of it.
+     */
+    var cropPadH: Int
+        get() = sp.getInt(KEY_CROP_PAD_H, 10)
+        set(value) = sp.edit().putInt(KEY_CROP_PAD_H, value.coerceIn(0, 80)).apply()
+
+    var cropPadV: Int
+        get() = sp.getInt(KEY_CROP_PAD_V, 50)
+        set(value) = sp.edit().putInt(KEY_CROP_PAD_V, value.coerceIn(0, 80)).apply()
+
     /** 0 = auto, 1 = portrait, 2 = landscape. */
     var orientationOrdinal: Int
         get() = sp.getInt(KEY_ORIENT, 0)
@@ -118,6 +131,8 @@ class Prefs(context: Context) {
         const val KEY_TWO = "two_page"
         const val KEY_CONTINUOUS = "continuous"
         const val KEY_AUTOCROP = "auto_crop"
+        const val KEY_CROP_PAD_H = "crop_pad_h"
+        const val KEY_CROP_PAD_V = "crop_pad_v"
         const val KEY_ORIENT = "orientation"
         const val KEY_SORT = "sort"
         const val KEY_LAST_PREFIX = "last_"

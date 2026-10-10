@@ -32,27 +32,32 @@ object AutoCrop {
 
     /** Never trim more than this much of a side. */
     private const val MAX_REMOVAL_H = 0.5f
-    private const val MAX_REMOVAL_V = 0.3f
+    private const val MAX_REMOVAL_V = 0.2f
 
     /** Shortest margin, in analysis rows/columns, worth trimming. */
     private const val MIN_RUN = 2
 
     /** Share of each detected margin handed back, so a soft edge is never shaved flush. */
-    private const val KEEP_SHARE_H = 0.1f
+    const val KEEP_SHARE_H = 0.1f
 
     /**
-     * Top and bottom are treated far more gently than left and right. A page's vertical
-     * margins are usually much deeper than its side margins, and the top and bottom of the
-     * artwork is often light enough to read as margin — so a rule that is right sideways
-     * eats whole panels vertically.
+     * Top and bottom are treated far more gently than left and right — at most a fifth of the
+     * height is ever taken, and half of what is found is handed straight back. A page's
+     * vertical margins run much deeper than its side margins, and the top and bottom of the
+     * artwork is often light enough to read as margin, so a rule that is right sideways eats
+     * whole panels vertically.
      */
-    private const val KEEP_SHARE_V = 0.35f
+    const val KEEP_SHARE_V = 0.5f
 
     /**
      * The content box of [source] in its own pixel coordinates, or null when there is nothing
      * worth trimming (or nothing that can be trimmed safely).
      */
-    fun cropRect(source: Bitmap): Rect? {
+    fun cropRect(
+        source: Bitmap,
+        keepH: Float = KEEP_SHARE_H,
+        keepV: Float = KEEP_SHARE_V,
+    ): Rect? {
         val w = source.width
         val h = source.height
         if (w < 32 || h < 32) return null
@@ -122,10 +127,10 @@ object AutoCrop {
         val bPx = (bottomRun * fy).toInt()
 
         val rect = Rect(
-            lPx - (lPx * KEEP_SHARE_H).toInt(),
-            tPx - (tPx * KEEP_SHARE_V).toInt(),
-            w - rPx + (rPx * KEEP_SHARE_H).toInt(),
-            h - bPx + (bPx * KEEP_SHARE_V).toInt(),
+            lPx - (lPx * keepH).toInt(),
+            tPx - (tPx * keepV).toInt(),
+            w - rPx + (rPx * keepH).toInt(),
+            h - bPx + (bPx * keepV).toInt(),
         ).also {
             it.left = it.left.coerceIn(0, w - 1)
             it.top = it.top.coerceIn(0, h - 1)
@@ -139,8 +144,12 @@ object AutoCrop {
     }
 
     /** Crops [source] to its content box; returns [source] unchanged when there is nothing to do. */
-    fun crop(source: Bitmap): Bitmap {
-        val rect = cropRect(source) ?: return source
+    fun crop(
+        source: Bitmap,
+        keepH: Float = KEEP_SHARE_H,
+        keepV: Float = KEEP_SHARE_V,
+    ): Bitmap {
+        val rect = cropRect(source, keepH, keepV) ?: return source
         return Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
     }
 
