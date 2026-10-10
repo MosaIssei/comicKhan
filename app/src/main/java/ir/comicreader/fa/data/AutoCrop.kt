@@ -16,8 +16,8 @@ import kotlin.math.min
  *
  * Deliberately conservative, because eating artwork is far worse than leaving a sliver of
  * margin behind: a side is only trimmed when its margin run is at least [MIN_RUN] deep, no
- * side ever loses more than [MAX_REMOVAL] of its dimension, and the box is then pushed back
- * outward by [PAD] so a soft edge can never be shaved.
+ * side ever loses more than [MAX_REMOVAL_H] / [MAX_REMOVAL_V] of its dimension, and a share
+ * of whatever margin was found is handed back so a soft edge can never be shaved flush.
  */
 object AutoCrop {
 
@@ -31,13 +31,22 @@ object AutoCrop {
     private const val COVERAGE = 0.96f
 
     /** Never trim more than this much of a side. */
-    private const val MAX_REMOVAL = 0.5f
+    private const val MAX_REMOVAL_H = 0.5f
+    private const val MAX_REMOVAL_V = 0.3f
 
     /** Shortest margin, in analysis rows/columns, worth trimming. */
     private const val MIN_RUN = 2
 
     /** Share of each detected margin handed back, so a soft edge is never shaved flush. */
-    private const val KEEP_SHARE = 0.1f
+    private const val KEEP_SHARE_H = 0.1f
+
+    /**
+     * Top and bottom are treated far more gently than left and right. A page's vertical
+     * margins are usually much deeper than its side margins, and the top and bottom of the
+     * artwork is often light enough to read as margin — so a rule that is right sideways
+     * eats whole panels vertically.
+     */
+    private const val KEEP_SHARE_V = 0.35f
 
     /**
      * The content box of [source] in its own pixel coordinates, or null when there is nothing
@@ -81,8 +90,8 @@ object AutoCrop {
             return n >= sh * COVERAGE
         }
 
-        val maxRows = (sh * MAX_REMOVAL).toInt()
-        val maxCols = (sw * MAX_REMOVAL).toInt()
+        val maxRows = (sh * MAX_REMOVAL_V).toInt()
+        val maxCols = (sw * MAX_REMOVAL_H).toInt()
 
         // Walk each side inward over its margin run first, with no capping yet: the raw runs
         // are what tells us whether there is any content at all. Capping before this check
@@ -113,10 +122,10 @@ object AutoCrop {
         val bPx = (bottomRun * fy).toInt()
 
         val rect = Rect(
-            lPx - (lPx * KEEP_SHARE).toInt(),
-            tPx - (tPx * KEEP_SHARE).toInt(),
-            w - rPx + (rPx * KEEP_SHARE).toInt(),
-            h - bPx + (bPx * KEEP_SHARE).toInt(),
+            lPx - (lPx * KEEP_SHARE_H).toInt(),
+            tPx - (tPx * KEEP_SHARE_V).toInt(),
+            w - rPx + (rPx * KEEP_SHARE_H).toInt(),
+            h - bPx + (bPx * KEEP_SHARE_V).toInt(),
         ).also {
             it.left = it.left.coerceIn(0, w - 1)
             it.top = it.top.coerceIn(0, h - 1)
