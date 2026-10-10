@@ -1187,14 +1187,14 @@ private fun ReaderSettings(
                         SliderSetting(
                             label = stringResource(R.string.crop_pad_h, cropPadH),
                             value = cropPadH.toFloat(),
-                            valueRange = 0f..80f,
+                            valueRange = 0f..100f,
                             onValueChange = { onCropPadH(it.roundToInt()) },
                             onValueChangeFinished = onCropPadCommit,
                         )
                         SliderSetting(
                             label = stringResource(R.string.crop_pad_v, cropPadV),
                             value = cropPadV.toFloat(),
-                            valueRange = 0f..80f,
+                            valueRange = 0f..100f,
                             onValueChange = { onCropPadV(it.roundToInt()) },
                             onValueChangeFinished = onCropPadCommit,
                         )

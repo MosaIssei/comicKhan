@@ -59,11 +59,11 @@ class Prefs(context: Context) {
      */
     var cropPadH: Int
         get() = sp.getInt(KEY_CROP_PAD_H, 10)
-        set(value) = sp.edit().putInt(KEY_CROP_PAD_H, value.coerceIn(0, 80)).apply()
+        set(value) = sp.edit().putInt(KEY_CROP_PAD_H, value.coerceIn(0, 100)).apply()
 
     var cropPadV: Int
-        get() = sp.getInt(KEY_CROP_PAD_V, 50)
-        set(value) = sp.edit().putInt(KEY_CROP_PAD_V, value.coerceIn(0, 80)).apply()
+        get() = sp.getInt(KEY_CROP_PAD_V, 70)
+        set(value) = sp.edit().putInt(KEY_CROP_PAD_V, value.coerceIn(0, 100)).apply()
 
     /** 0 = auto, 1 = portrait, 2 = landscape. */
     var orientationOrdinal: Int
