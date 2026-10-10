@@ -265,8 +265,30 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val savedPage = remember(vm.uri) { prefs.lastPage(vm.uri) }
-    LaunchedEffect(pageCount) {
-        if (pageCount > 0 && savedPage > 0) seekToPage(savedPage)
+
+    // Webtoon item heights must be known before the list is built, or scrolling up into
+    // pages that get measured later would jump. Read every page's display aspect first.
+    var webtoonAspects by remember(vm.uri, vm.generation) { mutableStateOf<List<Float>?>(null) }
+    LaunchedEffect(continuous, pageCount, vm.generation) {
+        if (continuous && pageCount > 0) {
+            if (webtoonAspects == null) {
+                webtoonAspects = withContext(Dispatchers.IO) {
+                    List(pageCount) { i -> vm.displayAspect(i) ?: 0.75f }
+                }
+            }
+        } else if (!continuous) {
+            webtoonAspects = null
+        }
+    }
+
+    // Resume only once the list actually exists (the webtoon shows a spinner while the
+    // aspects are read), otherwise the seek lands on a list that isn't there yet.
+    var seekDone by remember(vm.generation) { mutableStateOf(false) }
+    LaunchedEffect(pageCount, continuous, webtoonAspects) {
+        if (!seekDone && pageCount > 0 && (!continuous || webtoonAspects != null)) {
+            seekDone = true
+            if (savedPage > 0) seekToPage(savedPage)
+        }
     }
     LaunchedEffect(displayIndex, pageCount) {
         if (pageCount > 0) prefs.setLastPage(vm.uri, displayIndex)
@@ -288,16 +310,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
             }
 
             continuous -> {
-                // Read every page's aspect up-front (header only) so item heights are correct
-                // from the start — otherwise scrolling up into not-yet-measured pages jumps.
-                var aspects by remember(vm.uri, vm.generation) { mutableStateOf<List<Float>?>(null) }
-                LaunchedEffect(pageCount, vm.generation) {
-                    aspects = withContext(Dispatchers.IO) {
-                        List(pageCount) { i -> vm.pageAspect(i) ?: 0.75f }
-                    }
-                }
-
-                val a = aspects
+                val a = webtoonAspects
                 if (a == null) {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
                         CircularProgressIndicator(color = Color.White)
@@ -309,17 +322,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     var boxSize by remember { mutableStateOf(IntSize.Zero) }
                     var gestureZoom by remember { mutableFloatStateOf(1f) }
                     var focal by remember { mutableStateOf(Offset.Zero) }
-                    var pendingScrollX by remember { mutableStateOf<Int?>(null) }
                     var pendingVFactor by remember { mutableStateOf<Float?>(null) }
                     var pendingVY by remember { mutableStateOf(0f) }
 
-                    // Applied once the new (zoomed) layout exists, so the point under the fingers
-                    // stays put instead of jumping. (ScrollState works in integer pixels.)
+                    // Vertical correction, applied once the new (zoomed) layout exists.
                     LaunchedEffect(webtoonZoom) {
-                        pendingScrollX?.let { target ->
-                            pendingScrollX = null
-                            horizontal.scrollTo(target.coerceIn(0, horizontal.maxValue))
-                        }
                         pendingVFactor?.let { factor ->
                             pendingVFactor = null
                             if (factor != 1f) {
@@ -349,8 +356,11 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                                                 val newZoom = (webtoonZoom * gestureZoom).coerceIn(1f, 4f)
                                                 val factor = newZoom / webtoonZoom
                                                 if (factor != 1f) {
-                                                    pendingScrollX =
-                                                        (((horizontal.value + focal.x) * factor) - focal.x).roundToInt()
+                                                    // Applied synchronously (in the old layout's px) so the
+                                                    // new layout picks the value up with no extra frame.
+                                                    horizontal.dispatchRawDelta(
+                                                        (horizontal.value + focal.x) * (factor - 1f)
+                                                    )
                                                     pendingVFactor = factor
                                                     pendingVY = focal.y
                                                 }

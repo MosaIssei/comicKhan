@@ -148,11 +148,21 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrNull()
     }
 
-    /** Aspect (width / height) of a page, read from just the file header. Never throws. */
-    suspend fun pageAspect(index: Int): Float? = withContext(Dispatchers.IO) {
+    /**
+     * Aspect (width / height) of what will actually be shown for a page — the page's own
+     * aspect, or the post-crop aspect when auto-crop is on. Never throws.
+     */
+    suspend fun displayAspect(index: Int): Float? = withContext(Dispatchers.IO) {
         runCatching {
-            val head = source?.pageHead(index, 128 * 1024) ?: return@runCatching null
-            RegionDecode.size(head)?.let { if (it.height > 0) it.width.toFloat() / it.height else null }
+            if (autoCrop) {
+                val bitmap = source?.pageBitmap(index, 400, 0) ?: return@runCatching null
+                val shown = runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
+                if (shown.height > 0) shown.width.toFloat() / shown.height else null
+            } else {
+                val bytes = source?.pageHead(index, 128 * 1024) ?: source?.pageBytes(index)
+                val size = bytes?.let { RegionDecode.size(it) }
+                if (size != null && size.height > 0) size.width.toFloat() / size.height else null
+            }
         }.getOrNull()
     }
 
