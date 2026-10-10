@@ -14,10 +14,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import ir.comicreader.fa.data.AutoCrop
 import ir.comicreader.fa.data.ComicSource
 import ir.comicreader.fa.data.ComicSourceFactory
 import ir.comicreader.fa.data.RegionDecode
+import ir.comicreader.fa.data.decodeImageBytes
 import ir.comicreader.fa.data.model.ComicItem
+import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -49,6 +52,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Crop box per page, in the page's own pixels. Analysing a page is not free, and both the
+     * webtoon aspect pass and the decode itself need the answer: computing it twice is what
+     * made auto-crop slow, and any disagreement between the two made the page's layout box and
+     * its bitmap differ (which clips artwork off the top and bottom).
+     */
+    private val cropRectCache = LruCache<String, Rect>(64)
+
     /** Region/tile decoding is used unless auto-crop needs the whole page. */
     val useRegionDecoding: Boolean get() = source?.supportsRegion == true && !autoCrop
 
@@ -75,6 +86,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             cache.evictAll()
             regionCache.evictAll()
             decoderCache.evictAll()
+            cropRectCache.evictAll()
             revision++
         }
     }
@@ -94,6 +106,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             cache.evictAll()
             regionCache.evictAll()
             decoderCache.evictAll()
+            cropRectCache.evictAll()
             revision++
         }
     }
@@ -158,17 +171,67 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         withContext(Dispatchers.IO) {
             val target = requiredPx.coerceIn(512, MAX_DIM)
             val src = source ?: return@withContext null
+            if (crop) {
+                croppedRegion(index, target, minWidthPx)?.let { return@withContext it }
+            }
             val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
                 ?: return@withContext null
-            val ready = if (crop) {
-                runCatching {
-                    ir.comicreader.fa.data.AutoCrop.crop(bitmap, cropPadH / 100f, cropPadV / 100f)
-                }.getOrDefault(bitmap)
-            } else {
-                bitmap
-            }
-            ready.asImageBitmap()
+            bitmap.asImageBitmap()
         }
+
+    /**
+     * Decodes only the crop box, at the resolution it will be shown at, instead of decoding the
+     * whole page and then copying the box out of it. For a tall strip that is the difference
+     * between a few million pixels and twenty, and it guarantees the bitmap matches the box the
+     * list laid out from [cropRectFor].
+     */
+    private suspend fun croppedRegion(index: Int, target: Int, minWidthPx: Int): ImageBitmap? {
+        val rect = cropRectFor(index) ?: return null
+        val bytes = pageBytes(index) ?: return null
+        val decoder = runCatching { RegionDecode.newDecoder(bytes) }.getOrNull() ?: return null
+        return try {
+            val sample = regionSample(rect.width(), rect.height(), target, minWidthPx)
+            runCatching { RegionDecode.decode(decoder, rect, sample) }.getOrNull()?.asImageBitmap()
+        } finally {
+            runCatching { decoder.recycle() }
+        }
+    }
+
+    /** Mirrors [decodeImageBytes]' sampling, but for a sub-rectangle of the page. */
+    private fun regionSample(w: Int, h: Int, maxDim: Int, minWidthPx: Int): Int {
+        val longEdge = max(w, h)
+        var sample = 1
+        while (longEdge / (sample * 2) >= maxDim) sample *= 2
+        if (minWidthPx > 0) {
+            while (sample > 1 && w / sample < minWidthPx) sample /= 2
+        }
+        while ((w / sample).toLong() * (h / sample).toLong() > MAX_PIXELS) sample *= 2
+        return sample
+    }
+
+    /**
+     * The crop box for a page, in the page's own pixels, analysed once and cached. Returns null
+     * when the page should not be cropped. Never throws.
+     */
+    suspend fun cropRectFor(index: Int): Rect? = withContext(Dispatchers.IO) {
+        val key = index.toString() + "@" + cropPadH + "x" + cropPadV
+        cropRectCache.get(key)?.let { return@withContext it }
+        runCatching {
+            val bytes = pageBytes(index) ?: return@runCatching null
+            val size = RegionDecode.size(bytes) ?: return@runCatching null
+            val small = decodeImageBytes(bytes, ANALYSIS_DIM, 0) ?: return@runCatching null
+            val analysed = AutoCrop.cropRect(small, cropPadH / 100f, cropPadV / 100f)
+                ?: return@runCatching null
+            val fx = size.width.toFloat() / small.width
+            val fy = size.height.toFloat() / small.height
+            Rect(
+                (analysed.left * fx).toInt().coerceIn(0, size.width - 1),
+                (analysed.top * fy).toInt().coerceIn(0, size.height - 1),
+                (analysed.right * fx).toInt().coerceIn(1, size.width),
+                (analysed.bottom * fy).toInt().coerceIn(1, size.height),
+            )
+        }.getOrNull()?.also { cropRectCache.put(key, it) }
+    }
 
     // ---- region (tile) decoding ------------------------------------------------
 
@@ -192,15 +255,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun displayAspect(index: Int): Float? = withContext(Dispatchers.IO) {
         runCatching {
             if (autoCrop) {
-                // Only the box is needed here, never a cropped copy: the webtoon asks for an
-                // aspect of every page up front, so this has to stay cheap.
-                val bitmap = source?.pageBitmap(index, 400, 0) ?: return@runCatching null
-                val rect = runCatching {
-                    ir.comicreader.fa.data.AutoCrop.cropRect(bitmap, cropPadH / 100f, cropPadV / 100f)
-                }.getOrNull()
-                val shownW = rect?.width() ?: bitmap.width
-                val shownH = rect?.height() ?: bitmap.height
-                if (shownH > 0) shownW.toFloat() / shownH else null
+                // Same cached box the decode uses, so the item the list lays out and the bitmap
+                // drawn into it always agree.
+                val rect = cropRectFor(index) ?: return@runCatching null
+                if (rect.height() > 0) rect.width().toFloat() / rect.height() else null
             } else {
                 val header = runCatching { source?.pageHead(index, 128 * 1024) }.getOrNull()
                 val size = header?.let { RegionDecode.size(it) }
@@ -249,6 +307,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         regionCache.evictAll()
         bytesCache.evictAll()
         decoderCache.evictAll()
+        cropRectCache.evictAll()
         loading.clear()
     }
 
@@ -258,5 +317,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val MAX_DIM = 4096
+
+        /** Size the crop box is measured on: big enough to see margins, small enough to be cheap. */
+        private const val ANALYSIS_DIM = 480
+
+        private const val MAX_PIXELS = 24_000_000L
     }
 }
