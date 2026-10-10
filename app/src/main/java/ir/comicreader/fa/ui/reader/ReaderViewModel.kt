@@ -5,6 +5,7 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import android.util.LruCache
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -62,6 +63,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     var autoCrop by mutableStateOf(false)
         private set
 
+    /** Where reading stopped last time, read as part of [open] so the UI cannot race it. */
+    var startPage by mutableIntStateOf(0)
+        private set
+    var startOffset by mutableFloatStateOf(0f)
+        private set
+
     fun applyAutoCrop(enabled: Boolean) {
         if (autoCrop != enabled) {
             autoCrop = enabled
@@ -88,6 +95,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 source = src
                 title = item.name
                 uri = item.uri.toString()
+                // Set before pageCount: the UI resumes as soon as it sees a page count, so
+                // the restore target has to already be there or it would seek to page 0.
+                startPage = prefs.lastPage(item.uri.toString())
+                startOffset = prefs.lastPageOffset(item.uri.toString())
                 pageCount = count
                 error = if (count == 0) "صفحه‌ای یافت نشد" else null
                 prefs.setLastOpened(item.uri.toString(), System.currentTimeMillis())
@@ -150,7 +161,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Aspect (width / height) of what will actually be shown for a page — the page's own
-     * aspect, or the post-crop aspect when auto-crop is on. Never throws.
+     * aspect, or the post-crop aspect when auto-crop is on.
+     *
+     * The webtoon list sizes every item from this value before any bitmap exists, so a null
+     * here (which the caller turns into a guess) would make that item's height wrong and
+     * shift everything when you scroll back up into it. The header read is therefore backed
+     * by a small real decode, and only genuinely broken pages come back null. Never throws.
      */
     suspend fun displayAspect(index: Int): Float? = withContext(Dispatchers.IO) {
         runCatching {
@@ -159,8 +175,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 val shown = runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
                 if (shown.height > 0) shown.width.toFloat() / shown.height else null
             } else {
-                val bytes = source?.pageHead(index, 128 * 1024) ?: source?.pageBytes(index)
-                val size = bytes?.let { RegionDecode.size(it) }
+                val header = runCatching { source?.pageHead(index, 128 * 1024) }.getOrNull()
+                val size = header?.let { RegionDecode.size(it) }
+                    ?: source?.pageBitmap(index, 256, 0)?.let { android.util.Size(it.width, it.height) }
                 if (size != null && size.height > 0) size.width.toFloat() / size.height else null
             }
         }.getOrNull()
@@ -199,6 +216,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         uri = ""
         pageCount = 0
         error = null
+        startPage = 0
+        startOffset = 0f
         cache.evictAll()
         regionCache.evictAll()
         bytesCache.evictAll()

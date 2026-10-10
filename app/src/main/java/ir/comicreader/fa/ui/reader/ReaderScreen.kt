@@ -138,6 +138,9 @@ private fun bucketSize(px: Float): Int {
 
 private const val REGION_CAP = 4096
 
+/** How far the webtoon strip can be magnified in continuous mode. */
+private const val MAX_WEBTOON_ZOOM = 4f
+
 private fun regionSample(rect: Rect): Int {
     val longEdge = max(rect.width(), rect.height())
     var sample = 1
@@ -229,18 +232,40 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     val colorFilter = remember(contrast, invert) { imageColorFilter(contrast, invert) }
+    val density = LocalDensity.current
+    // Webtoon items are `fillMaxWidth()` inside a column that is always exactly one screen
+    // wide, so a page's on-screen height is just its width divided by its aspect.
+    val screenWidthPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
 
     val displayIndex = if (continuous) listState.firstVisibleItemIndex else pagerState.currentPage * step
 
-    fun seekToPage(page: Int) {
+    // Webtoon item heights must be known before the list is built: every item is sized from
+    // its pre-read aspect and never resized afterwards, so the list never re-anchors while
+    // you scroll back up into pages whose bitmaps only load later.
+    var webtoonAspects by remember(vm.uri, vm.generation, autoCrop) { mutableStateOf<List<Float>?>(null) }
+
+    /** How far into the first visible page the list is scrolled, as a fraction (0..1). */
+    fun currentPageFraction(): Float {
+        if (!continuous) return 0f
+        val first = listState.layoutInfo.visibleItemsInfo.firstOrNull() ?: return 0f
+        if (first.size <= 0) return 0f
+        return (-first.offset.toFloat() / first.size).coerceIn(0f, 1f)
+    }
+
+    suspend fun applySeek(page: Int, fraction: Float) {
         val bounded = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-        scope.launch {
-            if (continuous) {
-                listState.scrollToItem(bounded)
-            } else {
-                pagerState.scrollToPage((bounded / step).coerceIn(0, (slots - 1).coerceAtLeast(0)))
-            }
+        if (continuous) {
+            val ratio = webtoonAspects?.getOrNull(bounded) ?: 0f
+            val height = if (ratio > 0f) screenWidthPx / ratio else 0f
+            val offset = (fraction * height).roundToInt().coerceIn(0, max(0, height.toInt() - 1))
+            listState.scrollToItem(bounded, offset)
+        } else {
+            pagerState.scrollToPage((bounded / step).coerceIn(0, (slots - 1).coerceAtLeast(0)))
         }
+    }
+
+    fun seekToPage(page: Int, fraction: Float = 0f) {
+        scope.launch { applySeek(page, fraction) }
     }
 
     DisposableEffect(Unit) {
@@ -262,14 +287,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     LaunchedEffect(autoCrop) { vm.applyAutoCrop(autoCrop) }
     LaunchedEffect(webtoonZoom) { prefs.webtoonZoom = webtoonZoom }
 
-    BackHandler(onBack = onBack)
-
-    val savedPage = remember(vm.uri) { prefs.lastPage(vm.uri) }
-
-    // Webtoon item heights must be known before the list is built, or scrolling up into
-    // pages that get measured later would jump. Read every page's display aspect first.
-    var webtoonAspects by remember(vm.uri, vm.generation) { mutableStateOf<List<Float>?>(null) }
-    LaunchedEffect(continuous, pageCount, vm.generation) {
+    LaunchedEffect(continuous, pageCount, vm.generation, autoCrop) {
         if (continuous && pageCount > 0) {
             if (webtoonAspects == null) {
                 webtoonAspects = withContext(Dispatchers.IO) {
@@ -284,14 +302,29 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     // Resume only once the list actually exists (the webtoon shows a spinner while the
     // aspects are read), otherwise the seek lands on a list that isn't there yet.
     var seekDone by remember(vm.generation) { mutableStateOf(false) }
-    LaunchedEffect(pageCount, continuous, webtoonAspects) {
+    LaunchedEffect(pageCount, continuous, webtoonAspects, vm.generation) {
         if (!seekDone && pageCount > 0 && (!continuous || webtoonAspects != null)) {
+            if (vm.startPage > 0) applySeek(vm.startPage, vm.startOffset)
+            // Armed only once the jump has landed, so the position that was just restored
+            // can never be overwritten with page 0 on the way there.
             seekDone = true
-            if (savedPage > 0) seekToPage(savedPage)
         }
     }
-    LaunchedEffect(displayIndex, pageCount) {
-        if (pageCount > 0) prefs.setLastPage(vm.uri, displayIndex)
+    LaunchedEffect(displayIndex, seekDone, vm.uri, vm.generation) {
+        if (seekDone && pageCount > 0 && vm.uri.isNotEmpty()) {
+            prefs.setLastPage(vm.uri, displayIndex)
+            prefs.setLastPageOffset(vm.uri, currentPageFraction())
+        }
+    }
+
+    BackHandler {
+        // Leaving the reader is the moment that matters most: store exactly where we are,
+        // including the offset inside the page (ComicScreen's PAGEOFFSET).
+        if (seekDone && pageCount > 0 && vm.uri.isNotEmpty()) {
+            prefs.setLastPage(vm.uri, displayIndex)
+            prefs.setLastPageOffset(vm.uri, currentPageFraction())
+        }
+        onBack()
     }
 
     val isBookmarked = displayIndex in bookmarks
@@ -316,66 +349,89 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         CircularProgressIndicator(color = Color.White)
                     }
                 } else {
-                    val density = LocalDensity.current
                     val baseWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp }
-                    val horizontal = rememberScrollState()
                     var boxSize by remember { mutableStateOf(IntSize.Zero) }
                     var gestureZoom by remember { mutableFloatStateOf(1f) }
-                    var focal by remember { mutableStateOf(Offset.Zero) }
-                    var pendingVFactor by remember { mutableStateOf<Float?>(null) }
-                    var pendingVY by remember { mutableStateOf(0f) }
+                    var pan by remember { mutableStateOf(Offset.Zero) }
+                    var panReady by remember { mutableStateOf(false) }
 
-                    // Vertical correction, applied once the new (zoomed) layout exists.
-                    LaunchedEffect(webtoonZoom) {
-                        pendingVFactor?.let { factor ->
-                            pendingVFactor = null
-                            if (factor != 1f) {
-                                val anchorDistance = pendingVY + listState.firstVisibleItemScrollOffset
-                                listState.dispatchRawDelta((factor - 1f) * anchorDistance)
-                            }
-                        }
+                    // Zoom is a draw-time transform on the column — the same thing the
+                    // original does with a canvas Matrix — so the column is never re-measured
+                    // and page heights never change. That is why nothing shifts when the
+                    // fingers lift and nothing jumps when you scroll back up.
+                    val scale = (webtoonZoom * gestureZoom).coerceIn(1f, MAX_WEBTOON_ZOOM)
+
+                    fun clampPan(value: Offset, forScale: Float): Offset {
+                        val w = boxSize.width.toFloat()
+                        val h = boxSize.height.toFloat()
+                        if (w <= 0f || h <= 0f) return Offset.Zero
+                        return Offset(
+                            value.x.coerceIn(w * (1f - forScale), 0f),
+                            value.y.coerceIn(h * (1f - forScale), 0f),
+                        )
                     }
 
-                    val contentWidthPx = with(density) { (baseWidth * webtoonZoom).toPx() }
+                    // A restored zoom starts centred and clipped instead of pinned to a corner.
+                    LaunchedEffect(boxSize) {
+                        if (!panReady && boxSize.width > 0) {
+                            panReady = true
+                            val s = webtoonZoom.coerceIn(1f, MAX_WEBTOON_ZOOM)
+                            pan = clampPan(
+                                Offset(boxSize.width * (1f - s) / 2f, boxSize.height * (1f - s) / 2f),
+                                s,
+                            )
+                        }
+                    }
 
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .onSizeChanged { boxSize = it }
-                            .horizontalScroll(horizontal)
                             .pointerInput(Unit) {
-                                // Pinch scales visually (no reflow) for a smooth gesture; the list
-                                // reflows once on release. Single-finger drags scroll the list.
                                 awaitEachGesture {
                                     awaitFirstDown(requireUnconsumed = false)
                                     var pinching = false
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         if (event.changes.none { it.pressed }) {
-                                            if (pinching) {
-                                                val newZoom = (webtoonZoom * gestureZoom).coerceIn(1f, 4f)
-                                                val factor = newZoom / webtoonZoom
-                                                if (factor != 1f) {
-                                                    // Applied synchronously (in the old layout's px) so the
-                                                    // new layout picks the value up with no extra frame.
-                                                    horizontal.dispatchRawDelta(
-                                                        (horizontal.value + focal.x) * (factor - 1f)
-                                                    )
-                                                    pendingVFactor = factor
-                                                    pendingVY = focal.y
-                                                }
+                                            if (pinching && gestureZoom != 1f) {
+                                                // Fold the live factor into the saved one. The
+                                                // rendered transform is identical either way, so
+                                                // releasing the pinch moves nothing.
+                                                webtoonZoom =
+                                                    (webtoonZoom * gestureZoom).coerceIn(1f, MAX_WEBTOON_ZOOM)
                                                 gestureZoom = 1f
-                                                webtoonZoom = newZoom
                                             }
                                             break
                                         }
                                         if (event.changes.size >= 2) {
                                             pinching = true
-                                            focal = event.calculateCentroid()
-                                            val total =
-                                                (webtoonZoom * gestureZoom * event.calculateZoom()).coerceIn(1f, 4f)
-                                            gestureZoom = total / webtoonZoom
+                                            val focal = event.calculateCentroid()
+                                            val old = (webtoonZoom * gestureZoom).coerceIn(1f, MAX_WEBTOON_ZOOM)
+                                            val next = (old * event.calculateZoom()).coerceIn(1f, MAX_WEBTOON_ZOOM)
+                                            if (next != old) {
+                                                // Move the translation so the point under the
+                                                // fingers stays put: t' = f - (f - t) * k.
+                                                val k = next / old
+                                                pan = clampPan(focal - (focal - pan) * k, next)
+                                                gestureZoom = next / webtoonZoom
+                                            }
                                             event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                        } else if (!pinching &&
+                                            (webtoonZoom * gestureZoom) > 1.01f
+                                        ) {
+                                            // While zoomed a sideways drag pans; vertical drags
+                                            // still belong to the list.
+                                            val s = (webtoonZoom * gestureZoom).coerceIn(1f, MAX_WEBTOON_ZOOM)
+                                            val change = event.changes.firstOrNull { it.pressed } ?: continue
+                                            val delta = change.positionChange()
+                                            if (abs(delta.x) > abs(delta.y)) {
+                                                val next = clampPan(pan + Offset(delta.x, 0f), s)
+                                                if (next != pan) {
+                                                    pan = next
+                                                    change.consume()
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -384,19 +440,14 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                         LazyColumn(
                             state = listState,
                             modifier = Modifier
-                                .width(baseWidth * webtoonZoom)
+                                .width(baseWidth)
                                 .fillMaxHeight()
                                 .graphicsLayer(
-                                    scaleX = gestureZoom,
-                                    scaleY = gestureZoom,
-                                    transformOrigin = if (boxSize.width > 0 && contentWidthPx > 0f) {
-                                        TransformOrigin(
-                                            ((focal.x + horizontal.value) / contentWidthPx).coerceIn(0f, 1f),
-                                            (focal.y / boxSize.height).coerceIn(0f, 1f),
-                                        )
-                                    } else {
-                                        TransformOrigin.Center
-                                    },
+                                    scaleX = scale,
+                                    scaleY = scale,
+                                    transformOrigin = TransformOrigin(0f, 0f),
+                                    translationX = pan.x,
+                                    translationY = pan.y,
                                 ),
                         ) {
                             items(count = pageCount, key = { it }) { index ->
@@ -484,7 +535,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onContinuous = { value ->
                         continuous = value
                         prefs.continuous = value
-                        seekToPage(prefs.lastPage(vm.uri))
+                        seekToPage(prefs.lastPage(vm.uri), prefs.lastPageOffset(vm.uri))
                     },
                     brightness = brightness,
                     onBrightness = { brightness = it; prefs.brightness = it },
@@ -850,11 +901,15 @@ private fun ContinuousPage(
     val image = remember(revision, vm.generation, index, widthPx, vm.autoCrop) {
         vm.cachedPage(index, ReaderViewModel.MAX_DIM, widthPx)
     }
-    val ratio = image?.let { it.width.toFloat() / it.height } ?: aspect
+    // The item is sized from the pre-read aspect only. Falling back to the decoded bitmap's
+    // own ratio would resize the item the moment it loads, which shifts every page below it
+    // — the jump you see when scrolling back up into pages that loaded late.
+    val ratio = if (aspect > 0f) aspect else 0.75f
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(ratio)
+            .clipToBounds()
             .background(Color.Black)
             .pointerInput(Unit) { detectTapGestures { onTap() } },
         contentAlignment = Alignment.Center,
@@ -868,7 +923,7 @@ private fun ContinuousPage(
                 contentScale = ContentScale.FillWidth,
                 colorFilter = colorFilter,
                 filterQuality = FilterQuality.High,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }

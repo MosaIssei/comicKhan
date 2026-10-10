@@ -68,6 +68,17 @@ class Prefs(context: Context) {
         sp.edit().putInt(KEY_LAST_PREFIX + comicKey, page).apply()
     }
 
+    /**
+     * How far into [lastPage] reading stopped, as a fraction of that page (0..1). Mirrors
+     * ComicScreen's `PAGEOFFSET FLOAT`, which is what lets it reopen exactly where you were
+     * instead of at the top of the page.
+     */
+    fun lastPageOffset(comicKey: String): Float = sp.getFloat(KEY_LAST_OFF_PREFIX + comicKey, 0f)
+
+    fun setLastPageOffset(comicKey: String, fraction: Float) {
+        sp.edit().putFloat(KEY_LAST_OFF_PREFIX + comicKey, fraction.coerceIn(0f, 1f)).apply()
+    }
+
     fun totalPages(comicKey: String): Int = sp.getInt(KEY_TOTAL_PREFIX + comicKey, 0)
 
     fun setTotalPages(comicKey: String, count: Int) {
@@ -110,6 +121,7 @@ class Prefs(context: Context) {
         const val KEY_ORIENT = "orientation"
         const val KEY_SORT = "sort"
         const val KEY_LAST_PREFIX = "last_"
+        const val KEY_LAST_OFF_PREFIX = "last_off_"
         const val KEY_OPENED_PREFIX = "opened_"
         const val KEY_BM_PREFIX = "bm_"
         const val KEY_TOTAL_PREFIX = "total_"
