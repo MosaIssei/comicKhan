@@ -1,6 +1,7 @@
 package ir.comicreader.fa.ui.reader
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import android.util.LruCache
@@ -28,7 +29,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = ir.comicreader.fa.data.Prefs(app)
     private var source: ComicSource? = null
-    private val cache = LruCache<String, ImageBitmap>(12)
+
+    // Budgeted in pixels, not entries: a page can be a 2 MP screen-sized image or a 20 MP
+    // scan, so counting entries says nothing about the memory actually held.
+    private val cache = object : LruCache<String, ImageBitmap>(cacheBudgetPixels()) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int = value.width * value.height
+    }
     private val regionCache = LruCache<String, ImageBitmap>(6)
     private val bytesCache = LruCache<Int, ByteArray>(4)
     private val loading = java.util.Collections.synchronizedSet(HashSet<String>())
@@ -142,7 +148,18 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
                 ?: return@withContext null
             val ready = if (crop) {
-                runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
+                val rect = runCatching { ir.comicreader.fa.data.AutoCrop.cropRect(bitmap) }.getOrNull()
+                val cropped = rect?.let {
+                    runCatching { Bitmap.createBitmap(bitmap, it.left, it.top, it.width(), it.height()) }.getOrNull()
+                }
+                // The decode is only ever a scratch page we own, so drop the full-size copy as
+                // soon as the crop exists instead of carrying both bitmaps through the cache.
+                if (cropped != null && cropped !== bitmap) {
+                    bitmap.recycle()
+                    cropped
+                } else {
+                    bitmap
+                }
             } else {
                 bitmap
             }
@@ -171,9 +188,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun displayAspect(index: Int): Float? = withContext(Dispatchers.IO) {
         runCatching {
             if (autoCrop) {
+                // Only the box is needed here, not a cropped copy: the webtoon reads an aspect
+                // for every page up front, so this must stay cheap.
                 val bitmap = source?.pageBitmap(index, 400, 0) ?: return@runCatching null
-                val shown = runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
-                if (shown.height > 0) shown.width.toFloat() / shown.height else null
+                val rect = runCatching { ir.comicreader.fa.data.AutoCrop.cropRect(bitmap) }.getOrNull()
+                val shownW = rect?.width() ?: bitmap.width
+                val shownH = rect?.height() ?: bitmap.height
+                runCatching { bitmap.recycle() }
+                if (shownH > 0) shownW.toFloat() / shownH else null
             } else {
                 val header = runCatching { source?.pageHead(index, 128 * 1024) }.getOrNull()
                 val size = header?.let { RegionDecode.size(it) }
@@ -231,5 +253,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val MAX_DIM = 4096
+
+        /** Roughly a quarter of the heap, in ARGB_8888 pixels, for decoded pages. */
+        private fun cacheBudgetPixels(): Int =
+            (Runtime.getRuntime().maxMemory() / 16L).toInt().coerceIn(8_000_000, 48_000_000)
     }
 }

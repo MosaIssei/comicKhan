@@ -920,10 +920,13 @@ private fun ContinuousPage(
             Image(
                 bitmap = image,
                 contentDescription = stringResource(R.string.cd_page),
-                contentScale = ContentScale.FillWidth,
+                // Fit rather than FillWidth: the item height comes from the pre-read aspect,
+                // and with auto-crop that can differ a hair from the decoded bitmap. Filling
+                // the width would then push the overflow past the item and clip artwork.
+                contentScale = ContentScale.Fit,
                 colorFilter = colorFilter,
                 filterQuality = FilterQuality.High,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }

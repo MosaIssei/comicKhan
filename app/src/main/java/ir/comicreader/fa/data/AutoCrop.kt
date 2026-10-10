@@ -1,6 +1,7 @@
 package ir.comicreader.fa.data
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -10,21 +11,45 @@ import kotlin.math.min
  *
  * Each side gets its own background colour (taken from that side's border band), so a page
  * whose top margin is white but bottom margin carries scanner shadow is still cropped on
- * both. A row/column counts as margin when it is (almost) entirely its side's colour, which
- * tolerates JPEG noise far better than looking for the first non-background pixel.
+ * both.
+ *
+ * Deliberately conservative. A row only counts as margin when it is almost entirely its
+ * side's colour *and* that colour actually looks like a margin (a uniform band), and the
+ * whole trim is capped so a busy page can never lose a quarter of a side to a misread. It is
+ * much worse to eat artwork than to leave a little white behind.
  */
 object AutoCrop {
 
-    private const val SHORT_MIN = 150
-    private const val LONG_MAX = 480
-    private const val TOLERANCE = 30
-    private const val COVERAGE = 0.96f
-    private const val MAX_REMOVAL = 0.6f
+    /** Analysis bitmap: the short edge is grown to this, the long edge capped to [LONG_MAX]. */
+    private const val SHORT_MIN = 160
+    private const val LONG_MAX = 512
 
-    fun crop(source: Bitmap, tolerance: Int = TOLERANCE, coverage: Float = COVERAGE): Bitmap {
+    /** Per-channel distance still counted as "the same colour". */
+    private const val TOLERANCE = 22
+
+    /** Fraction of a row/column that must match the side colour for it to be margin. */
+    private const val COVERAGE = 0.985f
+
+    /** Never trim more than this much of a side, whatever the analysis says. */
+    private const val MAX_REMOVAL = 0.25f
+
+    /** A margin has to be at least this many rows/columns thick to be believable. */
+    private const val MIN_RUN = 3
+
+    /** Thickness of the border band the side colour is sampled from. */
+    private const val BAND = 2
+
+    /** How uniform the sampled band must be before it is trusted as a margin colour. */
+    private const val BAND_UNIFORMITY = 0.9f
+
+    /**
+     * The content box of [source] in its own pixel coordinates, or null when the page looks
+     * like it has nothing worth trimming (or nothing that can be trimmed safely).
+     */
+    fun cropRect(source: Bitmap, tolerance: Int = TOLERANCE, coverage: Float = COVERAGE): Rect? {
         val w = source.width
         val h = source.height
-        if (w < 32 || h < 32) return source
+        if (w < 32 || h < 32) return null
 
         var scale = SHORT_MIN.toFloat() / min(w, h)
         if (max(w, h) * scale > LONG_MAX) scale = LONG_MAX.toFloat() / max(w, h)
@@ -59,41 +84,60 @@ object AutoCrop {
             return n >= sh * coverage
         }
 
-        var top = 0
-        while (top < sh && rowIsBg(top, topBg)) top++
-        var bottom = sh - 1
-        while (bottom > top && rowIsBg(bottom, bottomBg)) bottom--
-        var left = 0
-        while (left < sw && colIsBg(left, leftBg)) left++
-        var right = sw - 1
-        while (right > left && colIsBg(right, rightBg)) right--
+        /** Length of the uniform run at the start (forward) or end (reverse) of the axis. */
+        fun uniformRun(limit: Int, isBg: (Int) -> Boolean, reverse: Boolean): Int {
+            var n = 0
+            while (n < limit && isBg(if (reverse) limit - 1 - n else n)) n++
+            return n
+        }
 
-        if (top >= bottom || left >= right) return source
+        // A side is only cropped when its own border band is genuinely flat: a page whose
+        // edge is busy artwork (a full-bleed dark panel, say) must not be trimmed at all.
+        val maxY = (sh * MAX_REMOVAL).toInt()
+        val maxX = (sw * MAX_REMOVAL).toInt()
+
+        val top = trimOf(
+            uniformRun(sh, { rowIsBg(it, topBg) }, false),
+            bandIsUniform(px, sw, sh, 0, topBg, tolerance), maxY,
+        )
+        val bottomRun = trimOf(
+            uniformRun(sh, { rowIsBg(it, bottomBg) }, true),
+            bandIsUniform(px, sw, sh, 1, bottomBg, tolerance), maxY,
+        )
+        val left = trimOf(
+            uniformRun(sw, { colIsBg(it, leftBg) }, false),
+            bandIsUniform(px, sw, sh, 2, leftBg, tolerance), maxX,
+        )
+        val rightRun = trimOf(
+            uniformRun(sw, { colIsBg(it, rightBg) }, true),
+            bandIsUniform(px, sw, sh, 3, rightBg, tolerance), maxX,
+        )
+
+        val right = sw - rightRun
+        val bottom = sh - bottomRun
+        if (right - left < 2 || bottom - top < 2) return null
 
         val fx = w.toFloat() / sw
         val fy = h.toFloat() / sh
-        val l = (left * fx).toInt().coerceIn(0, w - 1)
-        val t = (top * fy).toInt().coerceIn(0, h - 1)
-        val r = ((right + 1) * fx).toInt().coerceIn(l + 1, w)
-        val b = ((bottom + 1) * fy).toInt().coerceIn(t + 1, h)
+        val rect = Rect(
+            (left * fx).toInt().coerceIn(0, w - 1),
+            (top * fy).toInt().coerceIn(0, h - 1),
+            (right * fx).toInt().coerceIn(1, w),
+            (bottom * fy).toInt().coerceIn(1, h),
+        )
 
-        // Ignore implausible results (would drop too much of a side).
-        if (r - l < w * (1f - MAX_REMOVAL) || b - t < h * (1f - MAX_REMOVAL)) return source
-        if (r - l >= w - 2 && b - t >= h - 2) return source
-
-        return Bitmap.createBitmap(source, l, t, r - l, b - t)
+        // Report "nothing to do" when the box is already the whole page.
+        if (rect.width() >= w - 2 && rect.height() >= h - 2) return null
+        return rect
     }
+
+    /** A side's trim: zero unless the band looks like a margin and the run is long enough. */
+    private fun trimOf(run: Int, uniform: Boolean, cap: Int): Int =
+        if (uniform && run >= MIN_RUN) run.coerceAtMost(cap) else 0
 
     /** Median colour of one border band: 0 = top, 1 = bottom, 2 = left, 3 = right. */
     private fun medianColor(px: IntArray, w: Int, h: Int, side: Int): Int {
-        val band = 3
-        val vals = ArrayList<Int>()
-        when (side) {
-            0 -> for (y in 0 until min(band, h)) for (x in 0 until w) vals.add(px[y * w + x])
-            1 -> for (y in max(0, h - band) until h) for (x in 0 until w) vals.add(px[y * w + x])
-            2 -> for (y in 0 until h) for (x in 0 until min(band, w)) vals.add(px[y * w + x])
-            else -> for (y in 0 until h) for (x in max(0, w - band) until w) vals.add(px[y * w + x])
-        }
+        val vals = bandPixels(px, w, h, side)
         val r = IntArray(vals.size)
         val g = IntArray(vals.size)
         val b = IntArray(vals.size)
@@ -107,5 +151,26 @@ object AutoCrop {
         b.sort()
         val m = vals.size / 2
         return (0xFF shl 24) or (r[m] shl 16) or (g[m] shl 8) or b[m]
+    }
+
+    /** True when most of the band really is one flat colour, i.e. it looks like a margin. */
+    private fun bandIsUniform(px: IntArray, w: Int, h: Int, side: Int, colour: Int, tolerance: Int): Boolean {
+        val vals = bandPixels(px, w, h, side)
+        if (vals.isEmpty()) return false
+        var n = 0
+        for (p in vals) {
+            val ok = abs(((p shr 16) and 0xFF) - ((colour shr 16) and 0xFF)) <= tolerance &&
+                abs(((p shr 8) and 0xFF) - ((colour shr 8) and 0xFF)) <= tolerance &&
+                abs((p and 0xFF) - (colour and 0xFF)) <= tolerance
+            if (ok) n++
+        }
+        return n >= vals.size * BAND_UNIFORMITY
+    }
+
+    private fun bandPixels(px: IntArray, w: Int, h: Int, side: Int): IntArray = when (side) {
+        0 -> IntArray(min(BAND, h) * w) { i -> px[(i / w) * w + i % w] }
+        1 -> IntArray(min(BAND, h) * w) { i -> px[(max(0, h - BAND) + i / w) * w + i % w] }
+        2 -> IntArray(h * min(BAND, w)) { i -> px[(i / min(BAND, w)) * w + i % min(BAND, w)] }
+        else -> IntArray(h * min(BAND, w)) { i -> px[(i / min(BAND, w)) * w + max(0, w - BAND) + i % min(BAND, w)] }
     }
 }
