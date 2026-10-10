@@ -171,9 +171,13 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun displayAspect(index: Int): Float? = withContext(Dispatchers.IO) {
         runCatching {
             if (autoCrop) {
+                // Only the box is needed here, never a cropped copy: the webtoon asks for an
+                // aspect of every page up front, so this has to stay cheap.
                 val bitmap = source?.pageBitmap(index, 400, 0) ?: return@runCatching null
-                val shown = runCatching { ir.comicreader.fa.data.AutoCrop.crop(bitmap) }.getOrDefault(bitmap)
-                if (shown.height > 0) shown.width.toFloat() / shown.height else null
+                val rect = runCatching { ir.comicreader.fa.data.AutoCrop.cropRect(bitmap) }.getOrNull()
+                val shownW = rect?.width() ?: bitmap.width
+                val shownH = rect?.height() ?: bitmap.height
+                if (shownH > 0) shownW.toFloat() / shownH else null
             } else {
                 val header = runCatching { source?.pageHead(index, 128 * 1024) }.getOrNull()
                 val size = header?.let { RegionDecode.size(it) }

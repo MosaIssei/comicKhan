@@ -1,6 +1,7 @@
 package ir.comicreader.fa.data
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -12,19 +13,40 @@ import kotlin.math.min
  * whose top margin is white but bottom margin carries scanner shadow is still cropped on
  * both. A row/column counts as margin when it is (almost) entirely its side's colour, which
  * tolerates JPEG noise far better than looking for the first non-background pixel.
+ *
+ * Deliberately conservative, because eating artwork is far worse than leaving a sliver of
+ * margin behind: a side is only trimmed when its margin run is at least [MIN_RUN] deep, no
+ * side ever loses more than [MAX_REMOVAL] of its dimension, and the box is then pushed back
+ * outward by [PAD] so a soft edge can never be shaved.
  */
 object AutoCrop {
 
     private const val SHORT_MIN = 150
     private const val LONG_MAX = 480
-    private const val TOLERANCE = 30
-    private const val COVERAGE = 0.96f
-    private const val MAX_REMOVAL = 0.6f
 
-    fun crop(source: Bitmap, tolerance: Int = TOLERANCE, coverage: Float = COVERAGE): Bitmap {
+    /** Per-channel distance still counted as "the same colour". */
+    private const val TOLERANCE = 30
+
+    /** Fraction of a row/column that must match the side colour for it to be margin. */
+    private const val COVERAGE = 0.96f
+
+    /** Never trim more than this much of a side. */
+    private const val MAX_REMOVAL = 0.35f
+
+    /** Shortest margin, in analysis rows/columns, worth trimming. */
+    private const val MIN_RUN = 4
+
+    /** Fraction of each dimension pushed back outward after the trim. */
+    private const val PAD = 0.015f
+
+    /**
+     * The content box of [source] in its own pixel coordinates, or null when there is nothing
+     * worth trimming (or nothing that can be trimmed safely).
+     */
+    fun cropRect(source: Bitmap): Rect? {
         val w = source.width
         val h = source.height
-        if (w < 32 || h < 32) return source
+        if (w < 32 || h < 32) return null
 
         var scale = SHORT_MIN.toFloat() / min(w, h)
         if (max(w, h) * scale > LONG_MAX) scale = LONG_MAX.toFloat() / max(w, h)
@@ -42,23 +64,30 @@ object AutoCrop {
         val rightBg = medianColor(px, sw, sh, 3)
 
         fun close(p: Int, c: Int) =
-            abs(((p shr 16) and 0xFF) - ((c shr 16) and 0xFF)) <= tolerance &&
-                abs(((p shr 8) and 0xFF) - ((c shr 8) and 0xFF)) <= tolerance &&
-                abs((p and 0xFF) - (c and 0xFF)) <= tolerance
+            abs(((p shr 16) and 0xFF) - ((c shr 16) and 0xFF)) <= TOLERANCE &&
+                abs(((p shr 8) and 0xFF) - ((c shr 8) and 0xFF)) <= TOLERANCE &&
+                abs((p and 0xFF) - (c and 0xFF)) <= TOLERANCE
 
         fun rowIsBg(y: Int, c: Int): Boolean {
             val base = y * sw
             var n = 0
             for (x in 0 until sw) if (close(px[base + x], c)) n++
-            return n >= sw * coverage
+            return n >= sw * COVERAGE
         }
 
         fun colIsBg(x: Int, c: Int): Boolean {
             var n = 0
             for (y in 0 until sh) if (close(px[y * sw + x], c)) n++
-            return n >= sh * coverage
+            return n >= sh * COVERAGE
         }
 
+        val maxRows = (sh * MAX_REMOVAL).toInt()
+        val maxCols = (sw * MAX_REMOVAL).toInt()
+
+        // Walk each side inward over its margin run first, with no capping yet: the raw runs
+        // are what tells us whether there is any content at all. Capping before this check
+        // would turn a page the detector reads as uniformly background (a blank or very
+        // low-contrast page) into a crop of its middle third.
         var top = 0
         while (top < sh && rowIsBg(top, topBg)) top++
         var bottom = sh - 1
@@ -68,20 +97,40 @@ object AutoCrop {
         var right = sw - 1
         while (right > left && colIsBg(right, rightBg)) right--
 
-        if (top >= bottom || left >= right) return source
+        if (top >= bottom || left >= right) return null
+
+        // Only now apply the "is this a real margin" floor and the per-side cap.
+        val topRun = if (top >= MIN_RUN) top.coerceAtMost(maxRows) else 0
+        val bottomRun = (sh - 1 - bottom).let { if (it >= MIN_RUN) it.coerceAtMost(maxRows) else 0 }
+        val leftRun = if (left >= MIN_RUN) left.coerceAtMost(maxCols) else 0
+        val rightRun = (sw - 1 - right).let { if (it >= MIN_RUN) it.coerceAtMost(maxCols) else 0 }
 
         val fx = w.toFloat() / sw
         val fy = h.toFloat() / sh
-        val l = (left * fx).toInt().coerceIn(0, w - 1)
-        val t = (top * fy).toInt().coerceIn(0, h - 1)
-        val r = ((right + 1) * fx).toInt().coerceIn(l + 1, w)
-        val b = ((bottom + 1) * fy).toInt().coerceIn(t + 1, h)
+        val padX = (w * PAD).toInt()
+        val padY = (h * PAD).toInt()
 
-        // Ignore implausible results (would drop too much of a side).
-        if (r - l < w * (1f - MAX_REMOVAL) || b - t < h * (1f - MAX_REMOVAL)) return source
-        if (r - l >= w - 2 && b - t >= h - 2) return source
+        val rect = Rect(
+            (leftRun * fx).toInt() - padX,
+            (topRun * fy).toInt() - padY,
+            ((sw - rightRun) * fx).toInt() + padX,
+            ((sh - bottomRun) * fy).toInt() + padY,
+        ).also {
+            it.left = it.left.coerceIn(0, w - 1)
+            it.top = it.top.coerceIn(0, h - 1)
+            it.right = it.right.coerceIn(it.left + 1, w)
+            it.bottom = it.bottom.coerceIn(it.top + 1, h)
+        }
 
-        return Bitmap.createBitmap(source, l, t, r - l, b - t)
+        // Report "nothing to do" when the box is already the whole page.
+        if (rect.width() >= w - 2 && rect.height() >= h - 2) return null
+        return rect
+    }
+
+    /** Crops [source] to its content box; returns [source] unchanged when there is nothing to do. */
+    fun crop(source: Bitmap): Bitmap {
+        val rect = cropRect(source) ?: return source
+        return Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
     }
 
     /** Median colour of one border band: 0 = top, 1 = bottom, 2 = left, 3 = right. */
