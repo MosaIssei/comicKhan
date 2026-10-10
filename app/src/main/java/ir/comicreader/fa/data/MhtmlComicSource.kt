@@ -36,7 +36,7 @@ class MhtmlComicSource(
     }
 
     override suspend fun pageHead(index: Int, limit: Int): ByteArray? = withContext(Dispatchers.IO) {
-        pages.getOrNull(index)?.take(limit)
+        pages.getOrNull(index)?.let { if (it.size <= limit) it else it.copyOf(limit) }
     }
 
     override suspend fun pageBitmap(index: Int, maxDim: Int, minWidthPx: Int): Bitmap? =

@@ -104,7 +104,9 @@ import androidx.compose.ui.unit.dp
 import ir.comicreader.fa.R
 import ir.comicreader.fa.data.Prefs
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
