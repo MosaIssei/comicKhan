@@ -31,13 +31,13 @@ object AutoCrop {
     private const val COVERAGE = 0.96f
 
     /** Never trim more than this much of a side. */
-    private const val MAX_REMOVAL = 0.35f
+    private const val MAX_REMOVAL = 0.5f
 
     /** Shortest margin, in analysis rows/columns, worth trimming. */
-    private const val MIN_RUN = 4
+    private const val MIN_RUN = 2
 
-    /** Fraction of each dimension pushed back outward after the trim. */
-    private const val PAD = 0.015f
+    /** Share of each detected margin handed back, so a soft edge is never shaved flush. */
+    private const val KEEP_SHARE = 0.1f
 
     /**
      * The content box of [source] in its own pixel coordinates, or null when there is nothing
@@ -107,14 +107,16 @@ object AutoCrop {
 
         val fx = w.toFloat() / sw
         val fy = h.toFloat() / sh
-        val padX = (w * PAD).toInt()
-        val padY = (h * PAD).toInt()
+        val lPx = (leftRun * fx).toInt()
+        val tPx = (topRun * fy).toInt()
+        val rPx = (rightRun * fx).toInt()
+        val bPx = (bottomRun * fy).toInt()
 
         val rect = Rect(
-            (leftRun * fx).toInt() - padX,
-            (topRun * fy).toInt() - padY,
-            ((sw - rightRun) * fx).toInt() + padX,
-            ((sh - bottomRun) * fy).toInt() + padY,
+            lPx - (lPx * KEEP_SHARE).toInt(),
+            tPx - (tPx * KEEP_SHARE).toInt(),
+            w - rPx + (rPx * KEEP_SHARE).toInt(),
+            h - bPx + (bPx * KEEP_SHARE).toInt(),
         ).also {
             it.left = it.left.coerceIn(0, w - 1)
             it.top = it.top.coerceIn(0, h - 1)
