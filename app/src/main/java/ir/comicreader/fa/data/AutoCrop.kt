@@ -32,7 +32,7 @@ object AutoCrop {
 
     /** Never trim more than this much of a side. */
     private const val MAX_REMOVAL_H = 0.5f
-    private const val MAX_REMOVAL_V = 0.2f
+    private const val MAX_REMOVAL_V = 0.35f
 
     /** Shortest margin, in analysis rows/columns, worth trimming. */
     private const val MIN_RUN = 2
@@ -41,13 +41,12 @@ object AutoCrop {
     const val KEEP_SHARE_H = 0.1f
 
     /**
-     * Top and bottom are treated far more gently than left and right — at most a fifth of the
-     * height is ever taken, and half of what is found is handed straight back. A page's
+     * Top and bottom are still handled a little more gently than left and right. A page's
      * vertical margins run much deeper than its side margins, and the top and bottom of the
      * artwork is often light enough to read as margin, so a rule that is right sideways eats
      * whole panels vertically.
      */
-    const val KEEP_SHARE_V = 0.5f
+    const val KEEP_SHARE_V = 0.2f
 
     /**
      * The content box of [source] in its own pixel coordinates, or null when there is nothing

@@ -62,7 +62,7 @@ class Prefs(context: Context) {
         set(value) = sp.edit().putInt(KEY_CROP_PAD_H, value.coerceIn(0, 100)).apply()
 
     var cropPadV: Int
-        get() = sp.getInt(KEY_CROP_PAD_V, 70)
+        get() = sp.getInt(KEY_CROP_PAD_V, 20)
         set(value) = sp.edit().putInt(KEY_CROP_PAD_V, value.coerceIn(0, 100)).apply()
 
     /** 0 = auto, 1 = portrait, 2 = landscape. */
