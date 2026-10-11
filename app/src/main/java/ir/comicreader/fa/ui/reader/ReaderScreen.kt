@@ -110,11 +110,7 @@ import ir.comicreader.fa.R
 import ir.comicreader.fa.data.Prefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -303,17 +299,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     LaunchedEffect(continuous, pageCount, vm.generation, autoCrop, vm.cropPadH, vm.cropPadV) {
         if (continuous && pageCount > 0) {
             if (webtoonAspects == null) {
-                // One page at a time meant seconds of black screen before a long book appeared.
-                // The pages are independent, so a few workers cut that by the same factor.
                 webtoonAspects = withContext(Dispatchers.IO) {
-                    val out = arrayOfNulls<Float>(pageCount)
-                    val slots = Semaphore(4)
-                    coroutineScope {
-                        List(pageCount) { i ->
-                            async { slots.withPermit { out[i] = vm.displayAspect(i) } }
-                        }.forEach { it.await() }
-                    }
-                    List(pageCount) { out[it] ?: 0.75f }
+                    List(pageCount) { i -> vm.displayAspect(i) ?: 0.75f }
                 }
             }
         } else if (!continuous) {
@@ -948,13 +935,10 @@ private fun ContinuousPage(
             Image(
                 bitmap = image,
                 contentDescription = stringResource(R.string.cd_page),
-                // Fit, not FillWidth: the item box comes from the same measured crop box the
-                // bitmap was decoded with, so the two agree — and if they ever do not, this
-                // letterboxes instead of clipping the top and bottom off the page.
-                contentScale = ContentScale.Fit,
+                contentScale = ContentScale.FillWidth,
                 colorFilter = colorFilter,
                 filterQuality = FilterQuality.High,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
