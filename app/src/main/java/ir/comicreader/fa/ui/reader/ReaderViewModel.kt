@@ -1,6 +1,7 @@
 package ir.comicreader.fa.ui.reader
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import android.util.LruCache
@@ -16,6 +17,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import ir.comicreader.fa.data.ComicSource
 import ir.comicreader.fa.data.ComicSourceFactory
+import ir.comicreader.fa.data.decodeImageBytes
 import ir.comicreader.fa.data.RegionDecode
 import ir.comicreader.fa.data.model.ComicItem
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +33,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val cache = LruCache<String, ImageBitmap>(12)
     private val regionCache = LruCache<String, ImageBitmap>(6)
     private val bytesCache = LruCache<Int, ByteArray>(4)
+
+    /**
+     * Crop box per page, in the page's own pixels. Analysing a page is not free and two callers
+     * need the answer, so it is measured once and reused.
+     */
+    private val cropRectCache = LruCache<String, Rect>(64)
     private val loading = java.util.Collections.synchronizedSet(HashSet<String>())
     private var session = 0
 
@@ -75,6 +83,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             cache.evictAll()
             regionCache.evictAll()
             decoderCache.evictAll()
+            cropRectCache.evictAll()
             revision++
         }
     }
@@ -94,6 +103,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             cache.evictAll()
             regionCache.evictAll()
             decoderCache.evictAll()
+            cropRectCache.evictAll()
             revision++
         }
     }
@@ -160,15 +170,56 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val src = source ?: return@withContext null
             val bitmap = runCatching { src.pageBitmap(index, target, minWidthPx) }.getOrNull()
                 ?: return@withContext null
-            val ready = if (crop) {
-                runCatching {
-                    ir.comicreader.fa.data.AutoCrop.crop(bitmap, cropPadH / 100f, cropPadV / 100f)
-                }.getOrDefault(bitmap)
-            } else {
-                bitmap
-            }
+            val ready = if (crop) cropWithMeasuredRect(index, bitmap) else bitmap
             ready.asImageBitmap()
         }
+
+    /**
+     * Crops [bitmap] to the box [cropRectFor] measured, scaled from the page's own pixels into
+     * [bitmap]'s. Returns [bitmap] unchanged when there is nothing to trim.
+     */
+    private suspend fun cropWithMeasuredRect(index: Int, bitmap: Bitmap): Bitmap {
+        val rect = cropRectFor(index) ?: return bitmap
+        val srcWidth = pageBytes(index)?.let { RegionDecode.size(it)?.width } ?: return bitmap
+        if (srcWidth <= 0 || bitmap.width <= 0) return bitmap
+        val s = bitmap.width.toFloat() / srcWidth
+        val l = (rect.left * s).toInt().coerceIn(0, bitmap.width - 1)
+        val t = (rect.top * s).toInt().coerceIn(0, bitmap.height - 1)
+        val r = (rect.right * s).toInt().coerceIn(l + 1, bitmap.width)
+        val b = (rect.bottom * s).toInt().coerceIn(t + 1, bitmap.height)
+        if (l == 0 && t == 0 && r == bitmap.width && b == bitmap.height) return bitmap
+        return runCatching { Bitmap.createBitmap(bitmap, l, t, r - l, b - t) }.getOrDefault(bitmap)
+    }
+
+    /**
+     * The crop box for a page, in the page's own pixels, measured once and cached.
+     *
+     * Both the webtoon's aspect pass and the decode go through here. Measuring separately let
+     * the two disagree, and whenever the decode cropped less than the aspect pass had assumed,
+     * the page was drawn taller than the box the list had laid out for it — which, with the box
+     * clipping its contents, is exactly the artwork disappearing off the top and bottom.
+     *
+     * Returns null when the page should not be cropped. Never throws.
+     */
+    suspend fun cropRectFor(index: Int): Rect? = withContext(Dispatchers.IO) {
+        val key = index.toString() + "@" + cropPadH + "x" + cropPadV
+        cropRectCache.get(key)?.let { return@withContext it }
+        runCatching {
+            val bytes = pageBytes(index) ?: return@runCatching null
+            val size = RegionDecode.size(bytes) ?: return@runCatching null
+            val small = decodeImageBytes(bytes, ANALYSIS_DIM, 0) ?: return@runCatching null
+            val measured = AutoCrop.cropRect(small, cropPadH / 100f, cropPadV / 100f)
+                ?: return@runCatching null
+            val fx = size.width.toFloat() / small.width
+            val fy = size.height.toFloat() / small.height
+            Rect(
+                (measured.left * fx).toInt().coerceIn(0, size.width - 1),
+                (measured.top * fy).toInt().coerceIn(0, size.height - 1),
+                (measured.right * fx).toInt().coerceIn(1, size.width),
+                (measured.bottom * fy).toInt().coerceIn(1, size.height),
+            )
+        }.getOrNull()?.also { cropRectCache.put(key, it) }
+    }
 
     // ---- region (tile) decoding ------------------------------------------------
 
@@ -192,15 +243,16 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun displayAspect(index: Int): Float? = withContext(Dispatchers.IO) {
         runCatching {
             if (autoCrop) {
-                // Only the box is needed here, never a cropped copy: the webtoon asks for an
-                // aspect of every page up front, so this has to stay cheap.
-                val bitmap = source?.pageBitmap(index, 400, 0) ?: return@runCatching null
-                val rect = runCatching {
-                    ir.comicreader.fa.data.AutoCrop.cropRect(bitmap, cropPadH / 100f, cropPadV / 100f)
-                }.getOrNull()
-                val shownW = rect?.width() ?: bitmap.width
-                val shownH = rect?.height() ?: bitmap.height
-                if (shownH > 0) shownW.toFloat() / shownH else null
+                // The same measured box the decode crops with, so the aspect the list sizes the
+                // item from and the bitmap drawn into it can never disagree.
+                val rect = cropRectFor(index)
+                if (rect != null && rect.height() > 0) {
+                    rect.width().toFloat() / rect.height()
+                } else {
+                    val header = runCatching { source?.pageHead(index, 128 * 1024) }.getOrNull()
+                    val size = header?.let { RegionDecode.size(it) }
+                    if (size != null && size.height > 0) size.width.toFloat() / size.height else null
+                }
             } else {
                 val header = runCatching { source?.pageHead(index, 128 * 1024) }.getOrNull()
                 val size = header?.let { RegionDecode.size(it) }
@@ -249,6 +301,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         regionCache.evictAll()
         bytesCache.evictAll()
         decoderCache.evictAll()
+        cropRectCache.evictAll()
         loading.clear()
     }
 
@@ -258,5 +311,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val MAX_DIM = 4096
+
+        /** Size the crop box is measured on: big enough to see margins, cheap enough to repeat. */
+        private const val ANALYSIS_DIM = 480
     }
 }

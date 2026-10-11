@@ -143,16 +143,6 @@ object AutoCrop {
         return rect
     }
 
-    /** Crops [source] to its content box; returns [source] unchanged when there is nothing to do. */
-    fun crop(
-        source: Bitmap,
-        keepH: Float = KEEP_SHARE_H,
-        keepV: Float = KEEP_SHARE_V,
-    ): Bitmap {
-        val rect = cropRect(source, keepH, keepV) ?: return source
-        return Bitmap.createBitmap(source, rect.left, rect.top, rect.width(), rect.height())
-    }
-
     /** Median colour of one border band: 0 = top, 1 = bottom, 2 = left, 3 = right. */
     private fun medianColor(px: IntArray, w: Int, h: Int, side: Int): Int {
         val band = 3
