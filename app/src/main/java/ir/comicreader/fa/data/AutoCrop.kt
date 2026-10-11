@@ -9,15 +9,18 @@ import kotlin.math.min
 /**
  * Auto-crop: finds the page's content box by trimming uniform margins from each side.
  *
- * Each side gets its own background colour (taken from that side's border band), so a page
- * whose top margin is white but bottom margin carries scanner shadow is still cropped on
- * both. A row/column counts as margin when it is (almost) entirely its side's colour, which
- * tolerates JPEG noise far better than looking for the first non-background pixel.
+ * A row/column counts as margin when it is (almost) entirely one flat colour, which tolerates
+ * JPEG noise far better than looking for the first non-background pixel. Each side gets its own
+ * colour, so a page whose top margin is white but bottom margin carries scanner shadow is still
+ * cropped on both.
  *
- * Deliberately conservative, because eating artwork is far worse than leaving a sliver of
- * margin behind: a side is only trimmed when its margin run is at least [MIN_RUN] deep, no
- * side ever loses more than [MAX_REMOVAL_H] / [MAX_REMOVAL_V] of its dimension, and a share
- * of whatever margin was found is handed back so a soft edge can never be shaved flush.
+ * The awkward case is the page edge itself: a scan often carries a thin dark border, a film
+ * edge, or a strip of shadow that is *not* the margin. Judging against only the outermost band
+ * then reads that border as the background and the trim stops before it has even started, so
+ * some pages get cropped and others — the ones with the border — do not. Two defenses: each side
+ * is tested against both the outermost band and one sampled a little further in, and a short
+ * non-margin prefix is stepped over before the margin run begins. Both are only honoured when a
+ * real margin run follows, so artwork flush to the edge is never eaten.
  */
 object AutoCrop {
 
@@ -37,16 +40,14 @@ object AutoCrop {
     /** Shortest margin, in analysis rows/columns, worth trimming. */
     private const val MIN_RUN = 2
 
-    /** Share of each detected margin handed back, so a soft edge is never shaved flush. */
-    const val KEEP_SHARE_H = 0.1f
+    /** Share of the dimension stepped over at most, to get past an edge artifact. */
+    private const val EDGE_SKIP_SHARE = 0.05f
 
-    /**
-     * Top and bottom are still handled a little more gently than left and right. A page's
-     * vertical margins run much deeper than its side margins, and the top and bottom of the
-     * artwork is often light enough to read as margin, so a rule that is right sideways eats
-     * whole panels vertically.
-     */
-    const val KEEP_SHARE_V = 0.2f
+    /** How far inside the edge the second background sample is taken. */
+    private const val INSET_SHARE = 0.03f
+
+    /** Thickness of the band a side's colour is sampled from. */
+    private const val BAND = 3
 
     /**
      * The content box of [source] in its own pixel coordinates, or null when there is nothing
@@ -71,11 +72,6 @@ object AutoCrop {
         small.getPixels(px, 0, sw, 0, 0, sw, sh)
         if (small !== source) small.recycle()
 
-        val topBg = medianColor(px, sw, sh, 0)
-        val bottomBg = medianColor(px, sw, sh, 1)
-        val leftBg = medianColor(px, sw, sh, 2)
-        val rightBg = medianColor(px, sw, sh, 3)
-
         fun close(p: Int, c: Int) =
             abs(((p shr 16) and 0xFF) - ((c shr 16) and 0xFF)) <= TOLERANCE &&
                 abs(((p shr 8) and 0xFF) - ((c shr 8) and 0xFF)) <= TOLERANCE &&
@@ -94,29 +90,47 @@ object AutoCrop {
             return n >= sh * COVERAGE
         }
 
+        /**
+         * How many rows/columns this side loses. Tries both background candidates, steps over at
+         * most the edge-skip allowance first, and reports nothing at all unless a margin run of
+         * at least [MIN_RUN] follows.
+         */
+        fun marginRun(limit: Int, c1: Int, c2: Int, isBg: (Int, Int) -> Boolean, reverse: Boolean): Int {
+            val skip = max(2, (limit * EDGE_SKIP_SHARE).toInt())
+            fun runFor(c: Int): Int {
+                fun at(i: Int) = if (reverse) limit - 1 - i else i
+                var i = 0
+                while (i < limit && i < skip && !isBg(at(i), c)) i++
+                val start = i
+                while (i < limit && isBg(at(i), c)) i++
+                return if (i - start >= MIN_RUN) i else 0
+            }
+            return max(runFor(c1), runFor(c2))
+        }
+
+        val insetY = max(1, (sh * INSET_SHARE).toInt())
+        val insetX = max(1, (sw * INSET_SHARE).toInt())
+
         val maxRows = (sh * MAX_REMOVAL_V).toInt()
         val maxCols = (sw * MAX_REMOVAL_H).toInt()
 
-        // Walk each side inward over its margin run first, with no capping yet: the raw runs
-        // are what tells us whether there is any content at all. Capping before this check
-        // would turn a page the detector reads as uniformly background (a blank or very
-        // low-contrast page) into a crop of its middle third.
-        var top = 0
-        while (top < sh && rowIsBg(top, topBg)) top++
-        var bottom = sh - 1
-        while (bottom > top && rowIsBg(bottom, bottomBg)) bottom--
-        var left = 0
-        while (left < sw && colIsBg(left, leftBg)) left++
-        var right = sw - 1
-        while (right > left && colIsBg(right, rightBg)) right--
+        val topRun0 = marginRun(sh, bandColor(px, sw, sh, 0, 0), bandColor(px, sw, sh, 0, insetY),
+            { y, c -> rowIsBg(y, c) }, false)
+        val bottomRun0 = marginRun(sh, bandColor(px, sw, sh, 1, 0), bandColor(px, sw, sh, 1, insetY),
+            { y, c -> rowIsBg(y, c) }, true)
+        val leftRun0 = marginRun(sw, bandColor(px, sw, sh, 2, 0), bandColor(px, sw, sh, 2, insetX),
+            { x, c -> colIsBg(x, c) }, false)
+        val rightRun0 = marginRun(sw, bandColor(px, sw, sh, 3, 0), bandColor(px, sw, sh, 3, insetX),
+            { x, c -> colIsBg(x, c) }, true)
 
-        if (top >= bottom || left >= right) return null
+        // A side pair that between them account for the whole dimension means there is nothing
+        // to anchor on at all (a blank or uniformly low-contrast page).
+        if (topRun0 + bottomRun0 >= sh || leftRun0 + rightRun0 >= sw) return null
 
-        // Only now apply the "is this a real margin" floor and the per-side cap.
-        val topRun = if (top >= MIN_RUN) top.coerceAtMost(maxRows) else 0
-        val bottomRun = (sh - 1 - bottom).let { if (it >= MIN_RUN) it.coerceAtMost(maxRows) else 0 }
-        val leftRun = if (left >= MIN_RUN) left.coerceAtMost(maxCols) else 0
-        val rightRun = (sw - 1 - right).let { if (it >= MIN_RUN) it.coerceAtMost(maxCols) else 0 }
+        val topRun = topRun0.coerceAtMost(maxRows)
+        val bottomRun = bottomRun0.coerceAtMost(maxRows)
+        val leftRun = leftRun0.coerceAtMost(maxCols)
+        val rightRun = rightRun0.coerceAtMost(maxCols)
 
         val fx = w.toFloat() / sw
         val fy = h.toFloat() / sh
@@ -142,16 +156,30 @@ object AutoCrop {
         return rect
     }
 
-    /** Median colour of one border band: 0 = top, 1 = bottom, 2 = left, 3 = right. */
-    private fun medianColor(px: IntArray, w: Int, h: Int, side: Int): Int {
-        val band = 3
+    /** Share of each detected margin handed back, so a soft edge is never shaved flush. */
+    const val KEEP_SHARE_H = 0.1f
+
+    /**
+     * Top and bottom are still handled a little more gently than left and right. A page's
+     * vertical margins run much deeper than its side margins, and the top and bottom of the
+     * artwork is often light enough to read as margin, so a rule that is right sideways eats
+     * whole panels vertically.
+     */
+    const val KEEP_SHARE_V = 0.2f
+
+    /**
+     * Median colour of one border band, [inset] pixels in from that edge: 0 = top, 1 = bottom,
+     * 2 = left, 3 = right.
+     */
+    private fun bandColor(px: IntArray, w: Int, h: Int, side: Int, inset: Int): Int {
         val vals = ArrayList<Int>()
         when (side) {
-            0 -> for (y in 0 until min(band, h)) for (x in 0 until w) vals.add(px[y * w + x])
-            1 -> for (y in max(0, h - band) until h) for (x in 0 until w) vals.add(px[y * w + x])
-            2 -> for (y in 0 until h) for (x in 0 until min(band, w)) vals.add(px[y * w + x])
-            else -> for (y in 0 until h) for (x in max(0, w - band) until w) vals.add(px[y * w + x])
+            0 -> for (y in min(inset, h - 1) until min(inset + BAND, h)) for (x in 0 until w) vals.add(px[y * w + x])
+            1 -> for (y in max(0, h - inset - BAND) until max(0, h - inset)) for (x in 0 until w) vals.add(px[y * w + x])
+            2 -> for (y in 0 until h) for (x in min(inset, w - 1) until min(inset + BAND, w)) vals.add(px[y * w + x])
+            else -> for (y in 0 until h) for (x in max(0, w - inset - BAND) until max(0, w - inset)) vals.add(px[y * w + x])
         }
+        if (vals.isEmpty()) return 0
         val r = IntArray(vals.size)
         val g = IntArray(vals.size)
         val b = IntArray(vals.size)
