@@ -208,7 +208,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         runCatching {
             val bytes = pageBytes(index) ?: return@runCatching null
             val size = RegionDecode.size(bytes) ?: return@runCatching null
-            val small = decodeImageBytes(bytes, ANALYSIS_DIM, 0) ?: return@runCatching null
+            val small = decodeImageBytes(bytes, ANALYSIS_DIM, ANALYSIS_MIN_WIDTH)
+                ?: return@runCatching null
             val measured = AutoCrop.cropRect(small, cropPadH / 100f, cropPadV / 100f)
                 ?: return@runCatching null
             val fx = size.width.toFloat() / small.width
@@ -315,5 +316,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Size the crop box is measured on: big enough to see margins, cheap enough to repeat. */
         private const val ANALYSIS_DIM = 480
+
+        /**
+         * The analysis decode keeps at least this much width. Capping only the long edge left a
+         * 1:19 webtoon strip measured on a 31-pixel-wide image, which no amount of later
+         * analysis can recover the margin positions from.
+         */
+        private const val ANALYSIS_MIN_WIDTH = 160
     }
 }

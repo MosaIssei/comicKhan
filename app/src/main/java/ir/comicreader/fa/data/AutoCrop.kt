@@ -24,8 +24,20 @@ import kotlin.math.min
  */
 object AutoCrop {
 
-    private const val SHORT_MIN = 150
-    private const val LONG_MAX = 480
+    /**
+     * Size of the analysis grid. The short edge is grown towards [GRID_SHORT], and each
+     * dimension is then clamped on its own.
+     *
+     * Clamping the *long* edge instead — which is what this used to do — collapses the grid on a
+     * webtoon strip: a 1015x19551 page came out 24 columns wide, so one column stood for forty
+     * source pixels, the 96% test on those averaged columns was marginal, and the detected
+     * margin was quantised to roughly +/-40px. Sideways the strip then either cropped a little
+     * or not at all, and which of the two was down to rasterisation noise.
+     */
+    private const val GRID_SHORT = 160
+    private const val GRID_MIN = 48
+    private const val GRID_MAX_W = 256
+    private const val GRID_MAX_H = 1024
 
     /** Per-channel distance still counted as "the same colour". */
     private const val TOLERANCE = 30
@@ -62,10 +74,9 @@ object AutoCrop {
         val h = source.height
         if (w < 32 || h < 32) return null
 
-        var scale = SHORT_MIN.toFloat() / min(w, h)
-        if (max(w, h) * scale > LONG_MAX) scale = LONG_MAX.toFloat() / max(w, h)
-        val sw = max(16, (w * scale).toInt())
-        val sh = max(16, (h * scale).toInt())
+        val scale = GRID_SHORT.toFloat() / min(w, h)
+        val sw = (w * scale).toInt().coerceIn(GRID_MIN, GRID_MAX_W)
+        val sh = (h * scale).toInt().coerceIn(GRID_MIN, GRID_MAX_H)
 
         val small = Bitmap.createScaledBitmap(source, sw, sh, true)
         val px = IntArray(sw * sh)
