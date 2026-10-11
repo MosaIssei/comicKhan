@@ -15,10 +15,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import ir.comicreader.fa.data.AutoCrop
 import ir.comicreader.fa.data.ComicSource
 import ir.comicreader.fa.data.ComicSourceFactory
-import ir.comicreader.fa.data.decodeImageBytes
 import ir.comicreader.fa.data.RegionDecode
+import ir.comicreader.fa.data.decodeImageBytes
 import ir.comicreader.fa.data.model.ComicItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
