@@ -475,7 +475,9 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
 
             else -> HorizontalPager(
                 state = pagerState,
-                reverseLayout = rtl,
+                // Deliberately the inverse of the reading direction: with right-to-left chosen,
+                // dragging left turns forward (and the other way round for left-to-right).
+                reverseLayout = !rtl,
                 flingBehavior = PagerDefaults.flingBehavior(
                     state = pagerState,
                     // A small drag is enough to turn the page (default is 50%).
@@ -571,6 +573,25 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onJump = { page -> seekToPage(page) },
                     onJumpToPage = { jumpOpen = true },
                     onClose = { settingsVisible = false },
+                    onReset = {
+                        // Clearing the keys first means reading them back gives the defaults.
+                        prefs.resetReaderSettings()
+                        rtl = prefs.mangaRightToLeft
+                        fit = FitMode.entries[prefs.fitModeOrdinal.coerceIn(0, FitMode.entries.size - 1)]
+                        brightness = prefs.brightness.coerceIn(0.2f, 1f)
+                        contrast = prefs.contrast.coerceIn(0.5f, 2f)
+                        invert = prefs.invertColors
+                        autoCrop = prefs.autoCrop
+                        cropPadH = prefs.cropPadH
+                        cropPadV = prefs.cropPadV
+                        continuous = prefs.continuous
+                        webtoonZoom = prefs.webtoonZoom.coerceIn(1f, MAX_WEBTOON_ZOOM)
+                        orientation =
+                            OrientationMode.entries[prefs.orientationOrdinal.coerceIn(0, OrientationMode.entries.size - 1)]
+                        twoPage = prefs.twoPage
+                        vm.applyAutoCrop(autoCrop)
+                        vm.applyCropPad(cropPadH, cropPadV)
+                    },
                 )
             } else if (pageCount > 1) {
                 ReaderBottomBar(
@@ -1067,6 +1088,7 @@ private fun ReaderSettings(
     onJump: (Int) -> Unit,
     onJumpToPage: () -> Unit,
     onClose: () -> Unit,
+    onReset: () -> Unit,
 ) {
     // Bounded and scrollable: the panel has outgrown a screen, and a settings drawer that runs
     // off the bottom edge leaves the last rows unreachable.
@@ -1219,6 +1241,15 @@ private fun ReaderSettings(
                             }
                         }
                     }
+                }
+
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 18.dp, bottom = 4.dp),
+                ) {
+                    Text(stringResource(R.string.reset_settings))
                 }
             }
         }

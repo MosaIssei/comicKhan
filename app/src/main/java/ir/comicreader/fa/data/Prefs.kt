@@ -75,6 +75,28 @@ class Prefs(context: Context) {
         get() = sp.getInt(KEY_SORT, 0)
         set(value) = sp.edit().putInt(KEY_SORT, value).apply()
 
+    /**
+     * Puts the reader's display settings back to their defaults. The library folder, the
+     * library's own view/sort choice, bookmarks and reading positions are deliberately left
+     * alone — this is for when a display setting was knocked out of shape, not a wipe.
+     */
+    fun resetReaderSettings() {
+        sp.edit()
+            .remove(KEY_RTL)
+            .remove(KEY_FIT)
+            .remove(KEY_BRIGHT)
+            .remove(KEY_CONTRAST)
+            .remove(KEY_INVERT)
+            .remove(KEY_WEBTOON_ZOOM)
+            .remove(KEY_TWO)
+            .remove(KEY_CONTINUOUS)
+            .remove(KEY_AUTOCROP)
+            .remove(KEY_CROP_PAD_H)
+            .remove(KEY_CROP_PAD_V)
+            .remove(KEY_ORIENT)
+            .apply()
+    }
+
     fun lastPage(comicKey: String): Int = sp.getInt(KEY_LAST_PREFIX + comicKey, 0)
 
     fun setLastPage(comicKey: String, page: Int) {

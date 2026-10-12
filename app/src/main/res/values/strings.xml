@@ -45,8 +45,9 @@
     <string name="settings_group_nav">پیمایش</string>
     <string name="crop_pad_h">نگه‌داشتن حاشیهٔ چپ و راست — %1$d٪</string>
     <string name="crop_pad_v">نگه‌داشتن حاشیهٔ بالا و پایین — %1$d٪</string>
+    <string name="reset_settings">بازگشت به حالت اولیه</string>
     <string name="view_mode">حالت نمایش</string>
-    <string name="view_paged">صفحه‌به‌صفحه</string>
+    <string name="view_paged">کتابی</string>
     <string name="view_continuous">پیوسته (وب‌تُون)</string>
     <string name="webtoon_zoom">بزرگ‌نمایی وب‌تُون</string>
     <string name="fit_mode">حالت تناسب صفحه</string>
